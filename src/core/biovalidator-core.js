@@ -69,6 +69,12 @@ class BioValidator {
     // AJV requires $async keyword in schemas if they use any of async custom defined keywords.
     // We populate all schemas/defs with $async as a workaround to avoid users manually entering $async in schemas.
     _insertAsyncToSchemasAndDefs(inputSchema) {
+        // If it's the known meta-schema ID, skip
+        if (inputSchema.$id.startsWith("http://json-schema.org/draft")
+            || inputSchema.$id.startsWith("https://json-schema.org/draft")) {
+            return;
+        }
+
         inputSchema["$async"] = true;
         if (inputSchema.hasOwnProperty("definitions")) {
             let defs = Object.keys(inputSchema.definitions);
@@ -150,7 +156,6 @@ class BioValidator {
             next: true     // helps with 2019 features
         });
         
-        ajvInstance.addMetaSchema(draft7MetaSchema)
         addFormats(ajvInstance);
         require("ajv-errors")(ajvInstance)
 
@@ -162,6 +167,12 @@ class BioValidator {
 
     _resolveReference() {
         return (uri) => {
+            // skip if it's an official meta-schema
+            if (uri.startsWith("http://json-schema.org/draft") 
+                || uri.startsWith("https://json-schema.org/draft")) {
+                logger.debug(`Skipping meta-schema fetch: ${uri}`);
+                return Promise.resolve({});
+            }
             if (this.referencedSchemaCache.has(uri)) {
                 logger.info("Returning referenced schema from cache: " + uri);
                 return Promise.resolve(this.referencedSchemaCache.get(uri));
