@@ -1,6 +1,4 @@
-const Ajv = require("ajv")
-const Ajv2019 = require("ajv/dist/2019").default;
-const Ajv2020 = require("ajv/dist/2020")
+const Ajv = require("ajv").default;
 const addFormats = require("ajv-formats");
 const axios = require('axios');
 const AppError = require("../model/application-error");
@@ -144,9 +142,14 @@ class BioValidator {
     }
 
     _getAjvInstance(localSchemaPath) {
-        const ajvInstance = new Ajv2019({allErrors: true, strict: false, loadSchema: this._resolveReference()});
-        // const ajvInstance = new Ajv2020({allErrors: true, strict: false, loadSchema: this._resolveReference()});
-        const draft7MetaSchema = require("ajv/dist/refs/json-schema-draft-07.json")
+        const ajvInstance = new Ajv({
+            allErrors: true,
+            strict: false,
+            loadSchema: this._resolveReference(),
+            $data: true,   // for older draft usage
+            next: true     // helps with 2019 features
+        });
+        
         ajvInstance.addMetaSchema(draft7MetaSchema)
         addFormats(ajvInstance);
         require("ajv-errors")(ajvInstance)
