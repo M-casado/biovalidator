@@ -70,9 +70,9 @@ class BioValidator {
     // We populate all schemas/defs with $async as a workaround to avoid users manually entering $async in schemas.
     _insertAsyncToSchemasAndDefs(inputSchema) {
         // If it's the known meta-schema ID, skip
-        if (typeof inputSchema.$id === "string") {
-            if (inputSchema.$id.startsWith("http://json-schema.org/draft")
-                || inputSchema.$id.startsWith("https://json-schema.org/draft")) {
+        if (typeof inputSchema.$schema === "string") {
+            if (inputSchema.$schema.startsWith("http://json-schema.org/draft")
+                || inputSchema.$schema.startsWith("https://json-schema.org/draft")) {
                 return;
             }
         }
