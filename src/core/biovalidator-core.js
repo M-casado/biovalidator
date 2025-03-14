@@ -30,11 +30,6 @@ class BioValidator {
 
     // wrapper around _validate to process output
     validate(inputSchema, inputObject) {
-        if (inputSchema["$schema"] && inputSchema["$schema"].includes("2020-12")) {
-            let appError = new AppError("JSON Schema draft-2020-12 is not supported currently");
-            return new Promise((resolve, reject) => reject(appError));
-        }
-
         return new Promise((resolve, reject) => {
             this._validate(inputSchema, inputObject)
                 .then((validationResult) => {
