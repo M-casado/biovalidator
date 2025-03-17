@@ -12,7 +12,7 @@ stages:
   - test
 
 build_docker_image:
-  image: docker:latest
+  image: ${CI_REGISTRY_IMAGE}/docker:27
   services:
     - docker:dind
   stage: build
@@ -83,7 +83,7 @@ deploy_prod_fallback:
 
 .kube_deploy_script:
   stage: deploy
-  image: dtzar/helm-kubectl
+  image: ${CI_REGISTRY_IMAGE}/dtzar/helm-kubectl:3.16
   script:
     - kubectl create namespace ${K8S_NAMESPACE} || true
     - echo ${K8S_NAMESPACE}
