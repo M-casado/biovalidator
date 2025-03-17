@@ -12,7 +12,7 @@ stages:
   - test
 
 build_docker_image:
-  image: ${CI_REGISTRY_IMAGE}/docker:27
+  image: docker:latest
   services:
     - docker:dind
   stage: build
