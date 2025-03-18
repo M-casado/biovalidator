@@ -83,7 +83,7 @@ deploy_prod_fallback:
 
 .kube_deploy_script:
   stage: deploy
-  image: ${CI_REGISTRY_IMAGE}/dtzar/helm-kubectl:3.16
+  image: ${CI_REGISTRY_IMAGE}/helm-kubectl:3.16
   script:
     - kubectl create namespace ${K8S_NAMESPACE} || true
     - echo ${K8S_NAMESPACE}
