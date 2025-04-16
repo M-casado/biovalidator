@@ -28,28 +28,28 @@ class BioValidator {
 
     // wrapper around _validate to process output
     validate(inputSchema, inputObject) {
+        const sid = inputSchema["$id"] || "(no $id)";
+        logger.debug(`BioValidator.validate() called for schema $id: ${sid}`);
+
         return new Promise((resolve, reject) => {
             this._validate(inputSchema, inputObject)
                 .then((validationResult) => {
-                        if (validationResult.length === 0) {
-                            resolve([]);
-                        } else {
-                            let ajvErrors = [];
-                            validationResult.forEach(validationError => {
-                                ajvErrors.push(validationError);
-                            });
-                            resolve(this.convertToValidationErrors(ajvErrors));
-                        }
+                    if (validationResult.length === 0) {
+                        resolve([]);
+                    } else {
+                        const ajvErrors = [...validationResult];
+                        resolve(this.convertToValidationErrors(ajvErrors));
                     }
-                ).catch((error) => {
-                if (error.errors) {
-                    logger.error("An error occurred while running the validation: " + JSON.stringify(error))
-                    reject(new AppError(error.errors));
-                } else {
-                    logger.error("An error occurred while running the validation: " + JSON.stringify(error));
-                    reject(error);
-                }
-            });
+                })
+                .catch((error) => {
+                    if (error.errors) {
+                        logger.error("An error occurred while running the validation: " + JSON.stringify(error));
+                        reject(new AppError(error.errors));
+                    } else {
+                        logger.error("An error occurred while running the validation: " + JSON.stringify(error));
+                        reject(error);
+                    }
+                });
         });
     }
 
@@ -61,6 +61,7 @@ class BioValidator {
     }
 
     clearCachedSchema() {
+        logger.info("Clearing all cached schemas and removing AJV instance schemas.");
         this.ajvInstance.removeSchema();
         this.validatorCache.flushAll();
         this.referencedSchemaCache.flushAll();
@@ -101,6 +102,7 @@ class BioValidator {
 
     _validate(inputSchema, inputObject) {
         this._insertAsyncToSchemasAndDefs(inputSchema);
+        // The following is useful for when doing a deep-debugging of schema issues, but too verbose otherwise
         // logger.debug("Final schema after injection:\n" + JSON.stringify(inputSchema, null, 2));
 
         return new Promise((resolve, reject) => {
@@ -109,21 +111,21 @@ class BioValidator {
             compiledSchemaPromise.then((validate) => {
                 Promise.resolve(validate(inputObject))
                     .then((data) => {
-                            if (validate.errors) {
-                                resolve(validate.errors);
-                            } else {
-                                resolve([]);
-                            }
+                        if (validate.errors) {
+                            resolve(validate.errors);
+                        } else {
+                            resolve([]);
                         }
-                    ).catch((err) => {
-                    if (!(err instanceof Ajv.ValidationError)) {
-                        logger.error("An error occurred while running the validation. " + err);
-                        reject(new AppError("An error occurred while running the validation. " + err));
-                    } else {
-                        logger.info("Validation failed with errors: " + this.ajvInstance.errorsText(err.errors, {dataVar: inputObject.alias}));
-                        resolve(err.errors);
-                    }
-                });
+                    })
+                    .catch((err) => {
+                        if (!(err instanceof Ajv.ValidationError)) {
+                            logger.error("An error occurred while running the validation. " + err);
+                            reject(new AppError("An error occurred while running the validation. " + err));
+                        } else {
+                            logger.info("Validation failed with errors: " + this.ajvInstance.errorsText(err.errors, {dataVar: inputObject.alias}));
+                            resolve(err.errors);
+                        }
+                    });
             }).catch((err) => {
                 logger.error("Failed to compile schema: " + JSON.stringify(err));
                 reject(new AppError("Failed to compile schema: " + JSON.stringify(err)));
@@ -148,19 +150,19 @@ class BioValidator {
 
     getValidationFunction(inputSchema) {
         const schemaId = inputSchema['$id'];
-        if (this.validatorCache.has(schemaId)) {
+        if (schemaId && this.validatorCache.has(schemaId)) {
             logger.info("Returning compiled schema from cache, $id: " + schemaId);
             return Promise.resolve(this.validatorCache.get(schemaId));
-        } else {
-            const compiledSchemaPromise = this.ajvInstance.compileAsync(inputSchema);
-            if (schemaId) {
-                logger.info("Saving compiled schema in cache, $id: " + schemaId);
-                this.validatorCache.set(schemaId, compiledSchemaPromise);
-            } else {
-                logger.warn("Compiling schema with empty schema $id. Schema will not be cached.");
-            }
-            return Promise.resolve(compiledSchemaPromise);
         }
+
+        const compiledSchemaPromise = this.ajvInstance.compileAsync(inputSchema);
+        if (schemaId) {
+            logger.info("Saving compiled schema in cache, $id: " + schemaId);
+            this.validatorCache.set(schemaId, compiledSchemaPromise);
+        } else {
+            logger.warn("Compiling schema with empty schema $id. Schema will not be cached.");
+        }
+        return Promise.resolve(compiledSchemaPromise);
     }
 
     _getAjvInstance(localSchemaPath) {
@@ -173,19 +175,21 @@ class BioValidator {
         });
         
         addFormats(ajvInstance);
-        require("ajv-errors")(ajvInstance)
+        require("ajv-errors")(ajvInstance);
 
         this._addCustomKeywordValidators(ajvInstance);
         this._preCompileLocalSchemas(ajvInstance, localSchemaPath);
 
-        return ajvInstance
+        return ajvInstance;
     }
 
     _resolveReference() {
         return (uri) => {
             // skip if it's an official meta-schema
-            if (uri.startsWith("http://json-schema.org/draft") 
-                || uri.startsWith("https://json-schema.org/draft")) {
+            if (
+                uri.startsWith("http://json-schema.org/draft") ||
+                uri.startsWith("https://json-schema.org/draft")
+            ) {
                 logger.debug(`Skipping meta-schema fetch: ${uri}`);
                 return Promise.resolve({});
             }
@@ -202,9 +206,9 @@ class BioValidator {
                             this.referencedSchemaCache.set(uri, loadedSchema);
                             resolve(loadedSchema);
                         }).catch(err => {
-                        logger.error("Failed to retrieve referenced schema: " + uri + ", " + JSON.stringify(err))
-                        reject(new AppError("Failed to resolve $ref: " + uri + ", status: " + err.statusCode));
-                    });
+                            logger.error("Failed to retrieve referenced schema: " + uri + ", " + JSON.stringify(err));
+                            reject(new AppError("Failed to resolve $ref: " + uri + ", status: " + err.statusCode));
+                        });
                 });
             }
         };
@@ -214,21 +218,20 @@ class BioValidator {
         customKeywordValidators.forEach(customKeywordValidator => {
             ajvInstance = customKeywordValidator.configure(ajvInstance);
         });
-
         logger.info("Custom keywords successfully added. Number of custom keywords: " + customKeywordValidators.length);
         return ajvInstance;
     }
 
     _preCompileLocalSchemas(ajv, localSchemaPath) {
         if (localSchemaPath) {
-            logger.info("Compiling local schema from: " + localSchemaPath)
+            logger.info("Compiling local schema from: " + localSchemaPath);
             let schemaFiles = getFiles(localSchemaPath);
             for (let file of schemaFiles) {
                 let schema = readFile(file);
                 this._insertAsyncToSchemasAndDefs(schema);
                 ajv.getSchema(schema["$id"] || ajv.compile(schema)); // add to AJV cache if not already present
                 this.referencedSchemaCache.set(schema["$id"], schema);
-                logger.info("Adding compiled local schema to cache: " + schema["$id"])
+                logger.info("Adding compiled local schema to cache: " + schema["$id"]);
             }
         }
     }
