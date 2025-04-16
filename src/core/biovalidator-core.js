@@ -69,15 +69,28 @@ class BioValidator {
     // AJV requires $async keyword in schemas if they use any of async custom defined keywords.
     // We populate all schemas/defs with $async as a workaround to avoid users manually entering $async in schemas.
     _insertAsyncToSchemasAndDefs(inputSchema) {
-        // If it's the known meta-schema ID, skip
-        if (typeof inputSchema.$schema === "string") {
-            if (inputSchema.$schema.startsWith("http://json-schema.org/draft")
-                || inputSchema.$schema.startsWith("https://json-schema.org/draft")) {
-                return;
-            }
+        // If it's the known meta-schema ID, skip adding $async
+        if (
+            typeof inputSchema.$id === "string" &&
+            (
+                inputSchema.$id.startsWith("http://json-schema.org/draft") ||
+                inputSchema.$id.startsWith("https://json-schema.org/draft")
+            )
+        ) {
+            logger.debug(`Skipping $async injection for official meta-schema $id: ${inputSchema.$id || "[no $id at root]"}`);
+            return;
         }
 
-        inputSchema["$async"] = true;
+        if (!inputSchema.hasOwnProperty("$async")) {
+            inputSchema["$async"] = true;
+            logger.debug(`Auto-injected "$async": true at root for schema $id: ${inputSchema.$id || "[no $id at root]"}`);
+        } else if (inputSchema.$async === true) {
+            logger.debug(`Root already has "$async": '${inputSchema["$async"]}' for schema $id: ${inputSchema.$id || "[no $id at root]"}`);
+        } else if (inputSchema.$async === false) {
+            logger.debug(`Root already has "$async": '${inputSchema["$async"]}' ('$async' injection will be skipped for definitions) for schema $id: ${inputSchema.$id || "[no $id at root]"}`);
+            return;
+        }
+
         if (inputSchema.hasOwnProperty("definitions")) {
             let defs = Object.keys(inputSchema.definitions);
             for (let x = 0; x < defs.length; x++) {
@@ -88,6 +101,7 @@ class BioValidator {
 
     _validate(inputSchema, inputObject) {
         this._insertAsyncToSchemasAndDefs(inputSchema);
+        // logger.debug("Final schema after injection:\n" + JSON.stringify(inputSchema, null, 2));
 
         return new Promise((resolve, reject) => {
             const compiledSchemaPromise = this.getValidationFunction(inputSchema);
