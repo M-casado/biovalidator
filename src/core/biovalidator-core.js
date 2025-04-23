@@ -118,7 +118,6 @@ class BioValidator {
         // logger.debug("Final schema after injection:\n" + JSON.stringify(inputSchema, null, 2));
 
         return new Promise((resolve, reject) => {
-            logger.debug(`Attempting to get compiled validation function for schema $id: ${schemaIdForLog}'}`);
             const compiledSchemaPromise = this.getValidationFunction(inputSchema);
 
             compiledSchemaPromise.then((validate) => {
