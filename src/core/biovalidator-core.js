@@ -97,6 +97,10 @@ class BioValidator {
             for (let x = 0; x < defs.length; x++) {
                 inputSchema.definitions[defs[x]]["$async"] = true;
             }
+        } else if (inputSchema.hasOwnProperty("$defs")) { // support draft‑2019/2020 keyword ($defs)
+            for (const k of Object.keys(inputSchema.$defs)) {
+                inputSchema.$defs[k]["$async"] = true;
+            }
         }
     }
 
@@ -126,11 +130,27 @@ class BioValidator {
                             resolve(err.errors);
                         }
                     });
-            }).catch((err) => {
-                logger.error("Failed to compile schema: " + JSON.stringify(err));
-                reject(new AppError("Failed to compile schema: " + JSON.stringify(err)));
+                }).catch(err => {
+                    if (err instanceof Ajv.MissingRefError) {
+                        logger.error(
+                            `Failed to compile - missing $ref '${err.missingRef}' ` +
+                            `in schema '${err.missingSchema || inputSchema.$id || "(root)"}'`
+                        );
+                    } else if (err instanceof AppError) {
+                        logger.error(err.error || err.message || JSON.stringify(err));
+                    } else if (err.errors && err.errors.length) {
+                        logger.error(
+                            "Schema compile errors:\n" +
+                            err.errors
+                               .map(e => `  ✖ ${e.message} @ ${e.schemaPath}`)
+                               .join("\n")
+                        );
+                    } else {
+                        logger.error("Unexpected compile failure:\t" + (err.stack || err));
+                    }
+                    reject(new AppError("Failed to compile schema. See server log for details."));
+                });
             });
-        });
     }
 
     convertToValidationErrors(ajvErrorObjects) {
@@ -206,8 +226,18 @@ class BioValidator {
                             this.referencedSchemaCache.set(uri, loadedSchema);
                             resolve(loadedSchema);
                         }).catch(err => {
-                            logger.error("Failed to retrieve referenced schema: " + uri + ", " + JSON.stringify(err));
-                            reject(new AppError("Failed to resolve $ref: " + uri + ", status: " + err.statusCode));
+                            // If Axios reached the server but got an HTTP error (e.g., 404, 500...), 
+                            //      err.response exists, and we keep the numeric status
+                            // If the request never left the host (e.g., bad domain), err.response is
+                            //      undefined (?), and we label it "nerwork/DNS"
+                            const status =
+                                err.response ? err.response.status : "network/DNS";
+                            logger.error(
+                                `Failed to fetch referenced schema (status: ${status}): ${uri}`
+                            );
+                            reject(
+                                new AppError(`Failed to resolve $ref (status: ${status}): ${uri}`)
+                            );
                         });
                 });
             }
