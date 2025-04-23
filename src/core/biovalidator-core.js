@@ -220,7 +220,7 @@ class BioValidator {
          // Ensure 'this' context is correct when loadSchema is called by Ajv
          const self = this;
          return (uri) => {
-            logger.debug(`AJV requesting schema load for URI: ${uri}`);
+            logger.debug(`AJV requesting schema load (either from network or local cache) for URI: ${uri}`);
              // skip if it's an official meta-schema
              if (
                  uri.startsWith("http://json-schema.org/draft") ||
@@ -233,11 +233,10 @@ class BioValidator {
                  logger.debug("Returning referenced schema from reference cache: " + uri);
                  return Promise.resolve(self.referencedSchemaCache.get(uri));
              } else {
-                 logger.debug(`Attempting to fetch schema from network/local: ${uri}`);
+                 logger.debug(`Fetching referenced schema from network: ${uri}`);
                  return new Promise((resolve, reject) => {
                      axios({method: "GET", url: uri, responseType: 'json'})
                          .then(resp => {
-                             logger.debug(`Successfully fetched schema via network: ${uri}`);
                              const loadedSchema = resp.data;
                              self._insertAsyncToSchemasAndDefs(loadedSchema);
                              self.referencedSchemaCache.set(uri, loadedSchema);
