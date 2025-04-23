@@ -270,37 +270,14 @@ class BioValidator {
 
     _preCompileLocalSchemas(ajv, localSchemaPath) {
         if (localSchemaPath) {
-            logger.info("Pre-compiling local schemas from: " + localSchemaPath);
-            try {
-                let schemaFiles = getFiles(localSchemaPath);
-                for (let file of schemaFiles) {
-                    try {
-                        let schema = readFile(file);
-                        const schemaId = schema["$id"]; // Get ID before potentially modifying schema
-                        if (!schemaId) {
-                           logger.warn(`Local schema file ${file} lacks a '$id'. It might not be correctly referenceable or cached.`);
-                           // Optionally assign a file-based ID: schema['$id'] = Path.resolve(file).toURI();
-                           // Or skip pre-compilation if ID is essential: continue;
-                        }
-                        this._insertAsyncToSchemasAndDefs(schema);
-                        // Add to AJV instance cache AND reference cache
-                        // Use addSchema instead of getSchema/compile to handle potential async refs within local files too
-                         if (schemaId && !ajv.getSchema(schemaId)) {
-                            ajv.addSchema(schema, schemaId); // Add schema to AJV instance
-                            this.referencedSchemaCache.set(schemaId, schema); // Also add to reference cache
-                            logger.info(`Added pre-compiled local schema to caches: ${schemaId}`);
-                         } else if (!schemaId) {
-                            // AJV might compile it later if referenced, but we can't easily cache/manage it without an ID
-                            logger.warn(`Skipping caching for schema ${file} due to missing $id.`);
-                         } else {
-                             logger.debug(`Schema ${schemaId} already known to AJV or in reference cache.`);
-                         }
-                    } catch(fileReadError) {
-                       logger.error(`Error reading or parsing local schema file ${file}: ${fileReadError.message}`);
-                    }
-                }
-            } catch (dirError) {
-               logger.error(`Error accessing local schema path ${localSchemaPath}: ${dirError.message}`);
+            logger.info("Compiling local schema from: " + localSchemaPath);
+            let schemaFiles = getFiles(localSchemaPath);
+            for (let file of schemaFiles) {
+                let schema = readFile(file);
+                this._insertAsyncToSchemasAndDefs(schema);
+                ajv.getSchema(schema["$id"] || ajv.compile(schema)); // add to AJV cache if not already present
+                this.referencedSchemaCache.set(schema["$id"], schema);
+                logger.info("Adding compiled local schema to cache: " + schema["$id"]);
             }
         }
     }
