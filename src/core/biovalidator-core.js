@@ -28,8 +28,8 @@ class BioValidator {
 
     // wrapper around _validate to process output
     validate(inputSchema, inputObject) {
-        const sid = inputSchema["$id"] || "(no $id)";
-        logger.debug(`BioValidator.validate() called for initial schema $id: ${sid}`);
+        const sid = inputSchema["$id"] || "(no '$id')";
+        logger.debug(`BioValidator.validate() called for initial schema '$id': '${sid}'`);
 
         return new Promise((resolve, reject) => {
             this._validate(inputSchema, inputObject)
@@ -42,7 +42,7 @@ class BioValidator {
                     }
                 })
                 .catch((error) => {
-                    logger.error(`BioValidator.validate() caught error processing schema $id: ${sid}. Error: ${error.message || JSON.stringify(error)}`);
+                    logger.error(`BioValidator.validate() caught error processing schema '$id': '${sid}'. Error: ${error.message || JSON.stringify(error)}`);
                     if (error.errors) {
                         logger.error("AJV validation errors encountered: " + JSON.stringify(error.errors));
                         reject(new AppError(error.errors));
@@ -71,7 +71,7 @@ class BioValidator {
     // AJV requires $async keyword in schemas if they use any of async custom defined keywords.
     // We populate all schemas/defs with $async as a workaround to avoid users manually entering $async in schemas.
     _insertAsyncToSchemasAndDefs(inputSchema) {
-        const schemaIdForLog = inputSchema.$id || "[no $id at root]"; // Use for logging
+        const schemaIdForLog = inputSchema.$id || "[no '$id' at root]"; // Use for logging
         // If it's the known meta-schema ID, skip adding $async
         if (
             typeof inputSchema.$id === "string" &&
@@ -80,17 +80,17 @@ class BioValidator {
                 inputSchema.$id.startsWith("https://json-schema.org/draft")
             )
         ) {
-            logger.debug(`Skipping $async injection for official meta-schema $id: ${schemaIdForLog}`);
+            logger.debug(`Skipping "$async" injection for official meta-schema '$id': '${schemaIdForLog}'`);
             return;
         }
 
         if (!inputSchema.hasOwnProperty("$async")) {
             inputSchema["$async"] = true;
-            logger.debug(`Auto-injected "$async": true at root for schema $id: ${schemaIdForLog}`);
+            logger.debug(`Auto-injected "$async": true at root for schema '$id': '${schemaIdForLog}'`);
         } else if (inputSchema.$async === true) {
-            logger.debug(`Root already has "$async": '${inputSchema["$async"]}' for schema $id: ${schemaIdForLog}`);
+            logger.debug(`Root already has "$async": '${inputSchema["$async"]}' for schema '$id': '${schemaIdForLog}'`);
         } else if (inputSchema.$async === false) {
-            logger.debug(`Root already has "$async": '${inputSchema["$async"]}' ('$async' injection will be skipped for definitions) for schema $id: ${schemaIdForLog}`);
+            logger.debug(`Root already has "$async": '${inputSchema["$async"]}' ('$async' injection will be skipped for definitions) for schema '$id': '${schemaIdForLog}'`);
             return; // Don't inject if explicitly false
         }
 
@@ -121,14 +121,14 @@ class BioValidator {
             const compiledSchemaPromise = this.getValidationFunction(inputSchema);
 
             compiledSchemaPromise.then((validate) => {
-                logger.info(`Successfully obtained compiled function for schema $id: ${schemaIdForLog}'}. Now validating data.`);
+                logger.info(`Successfully obtained compiled function for schema '$id': '${schemaIdForLog}'.`);
                 Promise.resolve(validate(inputObject))
                     .then((data) => {
                         if (validate.errors) {
-                            logger.info(`Validation finished with errors for schema $id: ${schemaIdForLog}'}.`);
+                            logger.info(`Validation finished with errors for schema '$id': '${schemaIdForLog}'.`);
                             resolve(validate.errors);
                         } else {
-                           logger.info(`Validation finished successfully for schema $id: ${schemaIdForLog}'}.`);
+                           logger.info(`Validation finished successfully for schema '$id': '${schemaIdForLog}'.`);
                             resolve([]);
                         }
                     })
@@ -137,15 +137,16 @@ class BioValidator {
                             logger.error("An unexpected error occurred during data validation execution. " + (err.message || err));
                             reject(new AppError("An error occurred while running the validation. " + (err.message || err)));
                         } else {
-                            logger.info("Validation failed with AJV ValidationError: " + this.ajvInstance.errorsText(err.errors, {dataVar: inputObject.alias}));
+                            logger.error("Validation failed with AJV ValidationError: " + this.ajvInstance.errorsText(err.errors, {dataVar: inputObject.alias}));
                             resolve(err.errors);
                         }
                     });
              }).catch(err => {
-                 logger.error(`Failed to compile/get validation function for schema $id: ${schemaIdForLog}. Error: ${err.message || JSON.stringify(err)}`);
+                 logger.error(`Failed to compile/get validation function for schema '$id': '${schemaIdForLog}'. Error: ${err.message || JSON.stringify(err)}`);
                  if (err instanceof Ajv.MissingRefError) {
                      logger.error(
-                         `AJV MissingRefError (Failed to compile - missing $ref)': ${err.missingRef}'. ` +
+                         `AJV MissingRefError (Failed to compile)` +
+                         `. Missing '$ref': ${err.missingRef}'. ` +
                          `Base URI/Schema where error occurred: '${err.missingSchema || inputSchema.$id || "(root)"}'`
                      );
                  } else if (err instanceof AppError) {
@@ -183,17 +184,17 @@ class BioValidator {
     getValidationFunction(inputSchema) {
         const schemaId = inputSchema['$id'];
         if (schemaId && this.validatorCache.has(schemaId)) {
-            logger.info("Returning compiled schema from validator cache, $id: " + schemaId);
+            logger.info("Returning compiled schema from validator cache, '$id': " + schemaId);
             return Promise.resolve(this.validatorCache.get(schemaId));
         }
 
-        logger.debug(`Compiling schema $id: ${schemaId || '(no $id)'}. This will trigger loading of external references.`);
+        logger.debug(`Compiling schema '$id': ${schemaId || "(no '$id')"}. This will trigger loading of external references.`);
         const compiledSchemaPromise = this.ajvInstance.compileAsync(inputSchema);
         if (schemaId) {
-            logger.info("Saving compiled schema in validator cache, $id: " + schemaId);
+            logger.info("Saving compiled schema in validator cache, '$id': " + schemaId);
             this.validatorCache.set(schemaId, compiledSchemaPromise);
         } else {
-            logger.warn("Compiling schema with empty schema $id. Schema will not be cached in validator cache.");
+            logger.warn("Compiling schema with empty schema '$id'. Schema will not be cached in validator cache.");
         }
         return Promise.resolve(compiledSchemaPromise);
     }
@@ -251,7 +252,7 @@ class BioValidator {
                                  `Failed to fetch referenced schema URI: ${uri} (Status: ${status}). Error: ${err.message || err}`
                              );
                              reject(
-                                 new AppError(`Failed to resolve $ref via network/file (status: ${status}): ${uri}. Original error: ${err.message}`)
+                                 new AppError(`Failed to resolve $ref via network/DNS/file (Status: ${status}): ${uri}. Original error: ${err.message}`)
                              );
                          });
                  });
