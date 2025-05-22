@@ -1,0 +1,17 @@
+{
+    "schema": {
+        "$schema": "http://json-schema.org/draft-06/schema#",
+        "$id": "http://example.com/schema/test06-const",
+        "type": "object",
+        "properties": {
+        "foo": {
+            "const": "red"
+        }
+        },
+        "required": ["foo"]
+    },
+    "data": {
+        "foo": "red"
+    }
+}
+  

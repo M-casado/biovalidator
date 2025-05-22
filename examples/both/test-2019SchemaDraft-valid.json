@@ -1,0 +1,14 @@
+{
+    "schema": {
+        "$schema": "https://json-schema.org/draft/2019-09/schema",
+        "$id": "http://example.com/schema/test2019",
+        "type": "object",
+        "required": ["foo"],
+        "properties": {
+            "foo": { "type": "string" }
+        }
+    },
+    "data": {
+        "foo": "foo"
+    }
+}

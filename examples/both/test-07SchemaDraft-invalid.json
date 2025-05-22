@@ -1,0 +1,20 @@
+{
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "$id": "http://example.com/schema/test07-ifthen",
+      "type": "object",
+      "properties": {
+        "foo": { "type": "string" }
+      },
+      "if": {
+        "required": ["foo"]
+      },
+      "then": {
+        "required": ["bar"]
+      }
+    },
+    "data": {
+      "foo": "hello"
+    }
+}
+  
