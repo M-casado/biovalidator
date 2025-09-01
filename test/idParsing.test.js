@@ -9,7 +9,10 @@ describe('IdentifierParser', () => {
     beforeEach(() => {
         parser = new IdentifierParser('https://www.ebi.ac.uk/ols4/');
         mockAxios = new MockAdapter(axios);
-        mockAxios.onAny().reply(500); // Default response to catch unhandled requests
+        // More informative default for unmocked requests
+        mockAxios.onAny().reply(config => {
+            throw new Error(`Unmocked request: ${config.method?.toUpperCase()} ${config.url}`);
+        });
     });
 
     afterEach(async () => {
@@ -170,9 +173,8 @@ describe('IdentifierParser', () => {
         test('should detect various property types', async () => {
             const propertyTypes = ['property', 'object property', 'data property', 'annotation property'];
             for (const type of propertyTypes) {
-                // Reset handlers each iteration
-                mockAxios.reset();
-                mockAxios.onGet().reply(200, {
+                mockAxios.resetHandlers();
+                mockAxios.onGet(/\/api\/terms$/).reply(200, {
                     _embedded: {
                         terms: [{
                             iri: 'http://example.org/term',

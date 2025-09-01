@@ -66,26 +66,28 @@ describe("Sample Checklist tests", () => {
       ["ERC000051.json", "sample origin"],
     ]);
 
-    fs.readdir(checklistFolder, (err, files) => {
-      files.forEach(file => {
-        if (file === "ERC000011.json") return;
-        let inputSchema = fs.readFileSync(checklistFolder + file);
-        let jsonSchema = JSON.parse(inputSchema);
+    const files = await fs.promises.readdir(checklistFolder);
+    
+    for (const file of files) {
+      if (file === "ERC000011.json") continue;
+      
+      const jsonSchema = JSON.parse(
+        await fs.promises.readFile(checklistFolder + file, 'utf-8')
+      );
+      
+      const jsonObj = JSON.parse(
+        await fs.promises.readFile(invalidObjectFolder + samplePrefix + file, 'utf-8')
+      );
 
-        let inputObj = fs.readFileSync(invalidObjectFolder + samplePrefix + file);
-        let jsonObj = JSON.parse(inputObj);
-
-        biovalidator.validate(jsonSchema, jsonObj).then( (data) => {
-          expect(data).toBeDefined();
-          if (missingPropertyMap.get(file) != null) {
-            expect(data.length).toBe(1);
-            expect(data[0].errors.length).toBe(1);
-            expect(data[0].errors).toContain('must have required property \'' + missingPropertyMap.get(file) + '\'');
-          } else {
-            expect(data.length).toBe(0);
-          }
-        });
-      });
-    })
+      const data = await biovalidator.validate(jsonSchema, jsonObj);
+      expect(data).toBeDefined();
+      if (missingPropertyMap.get(file) != null) {
+        expect(data.length).toBe(1);
+        expect(data[0].errors.length).toBe(1);
+        expect(data[0].errors).toContain('must have required property \'' + missingPropertyMap.get(file) + '\'');
+      } else {
+        expect(data.length).toBe(0);
+      }
+    }
   });
 });

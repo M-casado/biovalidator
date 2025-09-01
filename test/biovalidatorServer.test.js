@@ -13,10 +13,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-    await new Promise((resolve) => server.expressServer.close(resolve));
-    if (server.pidPath) {
-        await npid.remove(server.pidPath);
-    }
+    await new Promise(res => server.expressServer.close(res));
+    if (server.pidPath) await npid.remove(server.pidPath);
 });
 
 describe('biovalidator server endpoints', () => {
