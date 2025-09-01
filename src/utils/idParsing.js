@@ -1,6 +1,7 @@
 const axios = require('axios');
-const { logger } = require('./winston');
 const qs = require('qs');
+const { logger } = require('./winston');
+const { getCache, keyFor, clearCache: clearSharedCache } = require('./cache');
 
 // Constants
 const DEFAULT_TIMEOUT = 10000; // 10 seconds
@@ -35,7 +36,6 @@ class IdentifierParser {
      */
     constructor(olsBaseUrl) {
         this.olsBaseUrl = olsBaseUrl.endsWith('/') ? olsBaseUrl : olsBaseUrl + '/';
-        this.cache = new Map();
         
         // Static patterns for identifier format detection
         this.IRI_PATTERN = /^https?:\/\/.+/i;
@@ -84,10 +84,11 @@ class IdentifierParser {
             .sort();
 
         // Check cache first if enabled - include OLS base URL to avoid collisions
-        const cacheKey = `${this.olsBaseUrl}|${termId}:${normalizedOntologies.join(',')}`;
-        if (options.cacheResults && this.cache.has(cacheKey)) {
+        const cache = getCache();
+        const cacheKey = keyFor(this.olsBaseUrl, 'parse', termId, normalizedOntologies.join(','));
+        if (options.cacheResults && cache.has(cacheKey)) {
             logger.debug(`Cache hit for term: ${termId}`);
-            const cached = this.cache.get(cacheKey);
+            const cached = cache.get(cacheKey);
             
             // Re-apply obsolescence policy even for cached terms
             if (cached.isObsolete && options.allowObsolete === false) {
@@ -204,7 +205,8 @@ class IdentifierParser {
 
             // Cache if enabled
             if (options.cacheResults) {
-                this.cache.set(cacheKey, resolved);
+                const cache = getCache();
+                cache.set(cacheKey, resolved);
                 logger.debug(`Cached term: ${termId}`);
             }
 
@@ -228,7 +230,7 @@ class IdentifierParser {
      * Clear the identifier resolution cache
      */
     clearCache() {
-        this.cache.clear();
+        clearSharedCache();
     }
 
     /**

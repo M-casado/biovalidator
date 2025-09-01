@@ -193,6 +193,12 @@ describe('IdentifierParser', () => {
     });
 
     describe('Obsolescence and Caching', () => {
+        const { setLimits, clearCache } = require('../src/utils/cache');
+
+        afterEach(() => {
+            clearCache();
+        });
+
         const obsoleteTerm = {
             iri: 'http://example.org/obsolete',
             ontologyId: 'test',
@@ -215,7 +221,7 @@ describe('IdentifierParser', () => {
                 _embedded: { terms: [obsoleteTerm] }
             });
 
-            const result = await parser.parseIdentifier('TEST:001', ['test'], { 
+            const result = await parser.parseIdentifier('TEST:001', ['test'], {
                 allowObsolete: true
             });
 
@@ -224,21 +230,48 @@ describe('IdentifierParser', () => {
         });
 
         test('should handle cached obsolete terms consistently', async () => {
-            // First call caches the obsolete term
             mockAxios.onGet().reply(200, {
                 _embedded: { terms: [obsoleteTerm] }
             });
 
-            await parser.parseIdentifier('TEST:001', ['test'], { 
+            await parser.parseIdentifier('TEST:001', ['test'], {
                 cacheResults: true,
                 allowObsolete: true
             });
 
-            // Second call should still respect allowObsolete=false
-            await expect(parser.parseIdentifier('TEST:001', ['test'], { 
+            await expect(parser.parseIdentifier('TEST:001', ['test'], {
                 cacheResults: true,
                 allowObsolete: false
             })).rejects.toThrow('is obsolete');
+        });
+
+        test('should handle cache eviction correctly', async () => {
+            const { setLimits, clearCache } = require('../src/utils/cache');
+            clearCache();
+            setLimits({ max: 1 });
+
+            const parser2 = new IdentifierParser('https://www.ebi.ac.uk/ols4/');
+
+            const term1 = { iri: 'http://example.org/term1', ontologyId: 'test', short_form: 'TEST_001', label: 'Term 1', is_obsolete: false, type: ['class'] };
+            const term2 = { iri: 'http://example.org/term2', ontologyId: 'test', short_form: 'TEST_002', label: 'Term 2', is_obsolete: false, type: ['class'] };
+
+            // Clear the default onAny trap for this test and set precise handlers
+            mockAxios.resetHandlers();
+
+            // 1st fetch (cache TEST:001)
+            mockAxios.onGet().replyOnce(200, { _embedded: { terms: [term1] } });
+            await parser2.parseIdentifier('TEST:001', ['test'], { cacheResults: true });
+
+            // 2nd fetch (cache TEST:002, evict TEST:001 due to max=1)
+            mockAxios.onGet().replyOnce(200, { _embedded: { terms: [term2] } });
+            await parser2.parseIdentifier('TEST:002', ['test'], { cacheResults: true });
+
+            // 3rd fetch (TEST:001 again → should hit network)
+            mockAxios.onGet().replyOnce(200, { _embedded: { terms: [{ ...term1, label: 'Term 1 Updated' }] } });
+            const res = await parser2.parseIdentifier('TEST:001', ['test'], { cacheResults: true });
+
+            expect(res.label).toBe('Term 1 Updated');
+            clearCache();
         });
     });
 

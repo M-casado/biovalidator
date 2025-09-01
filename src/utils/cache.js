@@ -34,10 +34,18 @@ function setLimits({ max } = {}) {
     if (max !== undefined) {
         const m = parseInt(max, 10);
         if (!Number.isNaN(m) && m > 0) {
+            // set new max
             cache.max = m;
-            // Force eviction of entries until we're within the new limit
-            while (cache.size > m) {
-                cache.pop();
+
+            // actively trim to new max now (v7 doesn't auto-trim on max change)
+            if (typeof cache.pop === 'function') {
+                while (cache.size > m) cache.pop(); // pop() removes the LRU entry
+            } else {
+                // Fallback: keys() is MRU -> LRU in v7; delete from the tail
+                const keys = Array.from(cache.keys());
+                for (let i = keys.length - 1; cache.size > m && i >= 0; i--) {
+                    cache.delete(keys[i]);
+                }
             }
         }
     }
