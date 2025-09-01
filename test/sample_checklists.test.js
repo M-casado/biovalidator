@@ -7,25 +7,26 @@ const invalidObjectFolder = "test/resources/ena_samples/objects/invalid/";
 const samplePrefix = "SAMEA_";
 
 describe("Sample Checklist tests", () => {
-  it('Sample Checklist tests for valid objects', ()=> {
-    fs.readdir(checklistFolder, (err, files) => {
-      files.forEach(file => {
-        let inputSchema = fs.readFileSync(checklistFolder + file);
-        let jsonSchema = JSON.parse(inputSchema);
+  it('Sample Checklist tests for valid objects', async () => {
+    const files = await fs.promises.readdir(checklistFolder);
+    
+    for (const file of files) {
+      const inputSchema = JSON.parse(
+        await fs.promises.readFile(checklistFolder + file, 'utf-8')
+      );
+      
+      const jsonObj = JSON.parse(
+        await fs.promises.readFile(validObjectFolder + samplePrefix + file, 'utf-8')
+      );
 
-        let inputObj = fs.readFileSync(validObjectFolder + samplePrefix + file);
-        let jsonObj = JSON.parse(inputObj);
-
-        biovalidator.validate(jsonSchema, jsonObj).then( (data) => {
-          expect(data).toBeDefined();
-          expect(data.length).toBe(0);
-        });
-      });
-    })
+      const data = await biovalidator.validate(inputSchema, jsonObj);
+      expect(data).toBeDefined();
+      expect(data.length).toBe(0);
+    }
   });
 
-  it('Sample Checklist tests with invalid objects', ()=> {
-    var missingPropertyMap = new Map([
+  it('Sample Checklist tests with invalid objects', async () => {
+    const missingPropertyMap = new Map([
       ["ERC000012.json", "project name"],
       ["ERC000013.json", "project name"],
       ["ERC000014.json", "project name"],

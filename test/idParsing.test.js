@@ -14,6 +14,7 @@ describe('IdentifierParser', () => {
 
     afterEach(async () => {
         mockAxios.restore();
+        parser.clearCache(); // Ensure clean cache between tests
         await new Promise(resolve => setTimeout(resolve, 0)); // Let any pending promises resolve
     });
 
@@ -169,14 +170,20 @@ describe('IdentifierParser', () => {
         test('should detect various property types', async () => {
             const propertyTypes = ['property', 'object property', 'data property', 'annotation property'];
             for (const type of propertyTypes) {
-                mockAxios.onGet().replyOnce(200, {
+                // Reset handlers each iteration
+                mockAxios.reset();
+                mockAxios.onGet().reply(200, {
                     _embedded: {
                         terms: [{
-                            ...baseResponse._embedded.terms[0],
+                            iri: 'http://example.org/term',
+                            ontologyId: 'test',
+                            label: 'Test Term',
+                            is_obsolete: false,
                             type: [type]
                         }]
                     }
                 });
+
                 const result = await parser.parseIdentifier('TEST:001', ['test']);
                 expect(result.type).toBe(EntityType.PROPERTY);
             }

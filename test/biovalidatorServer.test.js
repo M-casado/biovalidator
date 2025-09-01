@@ -3,16 +3,24 @@ const npid = require("npid");
 
 const BioValidatorServer = require('../src/core/server');
 const supertest = require('supertest');
-const server = new BioValidatorServer("3020", "");
-server.start()
-const requestWithSupertest = supertest(server.app);
+let server;
+let requestWithSupertest;
+
+beforeAll(async () => {
+    server = new BioValidatorServer("0", ""); // Use port 0 for OS-assigned port
+    await server.start();
+    requestWithSupertest = supertest(server.app);
+});
+
+afterAll(async () => {
+    await new Promise((resolve) => server.expressServer.close(resolve));
+    if (server.pidPath) {
+        await npid.remove(server.pidPath);
+    }
+});
 
 describe('biovalidator server endpoints', () => {
-  afterAll(done => {
-    server.expressServer.close();
-    npid.remove(server.pidPath);
-    done();
-  });
+  // afterAll moved to top level
 
   it('GET /cache should initially return empty cache', async () => {
     const res = await requestWithSupertest.get('/cache');
