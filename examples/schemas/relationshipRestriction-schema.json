@@ -27,7 +27,7 @@
         "ontologies": ["efo"],
         "targets": ["http://purl.obolibrary.org/obo/EFO_0000001"],
         "relationType": ["rdfs:subClassOf*"],
-        "includeSelf": false,
+        "idFormat": "CURIE",
         "allowObsolete": false
       }
     },
@@ -38,8 +38,7 @@
         "ontologies": ["uberon"],
         "targets": ["http://purl.obolibrary.org/obo/UBERON_0000468"],
         "relationType": ["rdfs:subClassOf*"],
-        "idFormat": "CURIE",
-        "includeSelf": false,
+        "idFormat": "IRI",
         "allowObsolete": false,
         "directChild": false,
         "leafNode": true
@@ -55,7 +54,7 @@
           "http://purl.obolibrary.org/obo/MONDO_0000001"
         ],
         "relationType": ["rdfs:subClassOf*"],
-        "includeSelf": true
+        "idFormat": "CURIE"
       }
     },
     "directChildTerm": {
@@ -65,7 +64,7 @@
         "ontologies": ["cl"],
         "targets": ["http://purl.obolibrary.org/obo/CL_0000000"],
         "relationType": ["rdfs:subClassOf"],
-        "directChild": true
+        "idFormat": "CURIE"
       }
     },
     "flexibleFormatTerm": {
@@ -75,9 +74,7 @@
         "ontologies": ["go"],
         "targets": ["http://purl.obolibrary.org/obo/GO_0008150"],
         "relationType": ["rdfs:subClassOf*"],
-        "idFormat": "ANY",
-        "allowImported": true,
-        "allowObsolete": true
+        "idFormat": "CURIE"
       }
     }
   },

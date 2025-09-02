@@ -1,111 +1,89 @@
-const Ajv = require("ajv").default;
-const axios = require('axios');
-const {logger} = require("../utils/winston");
-const CustomAjvError = require("../model/custom-ajv-error");
-const {default: ajv} = require("ajv");
-const RelationshipRestriction = require("./relationshipRestriction");
+'use strict';
+
+const relationshipRestriction = require('./relationshipRestriction');
+const { ValidationError } = require('ajv');
 
 class IsChildTermOf {
-    constructor(keywordName, olsSearchUrl) {
-        this.keywordName = keywordName ? keywordName : "isChildTermOf";
-        this.olsSearchUrl = olsSearchUrl;
-        this.relationshipRestriction = new RelationshipRestriction("_internal_relationship", olsSearchUrl?.replace('/api/search?q=', '/'));
-    }
+	constructor(ajv, olsBaseUrl) {
+		this.ajv = ajv;
+		this.olsBaseUrl = olsBaseUrl;
+	}
 
-    configure(ajv) {
-        const keywordDefinition = {
-            keyword: this.keywordName,
-            async: this.isAsync(),
-            type: "string",
-            validate: this.generateKeywordFunction(),
-            errors: true
-        };
+	getKeywordDefinition() {
+		function mapLegacySchema(schema) {
+			return {
+				ontologies: schema.ontologies || (schema.ontology ? [schema.ontology] : []),
+				targets: schema.targets || (schema.parentTerm ? [schema.parentTerm] : []),
+				relationType: ['rdfs:subClassOf*'],
+				idFormat: schema.idFormat || 'CURIE',
+				allowObsolete: typeof schema.allowObsolete === 'boolean' ? schema.allowObsolete : true,
+				allowImported: typeof schema.allowImported === 'boolean' ? schema.allowImported : true,
+				leafNode: !!schema.leafNode,
+				includeSelf: false
+			};
+		}
 
-        return ajv.addKeyword(keywordDefinition);
-    }
+		return {
+			keyword: 'isChildTermOf',
+			type: 'string',
+			async: true,
+			errors: true,
+			compile(schema /*, parentSchema, it */) {
+				const mapped = mapLegacySchema(schema);
+				const baseValidate = relationshipRestriction.compile(mapped);
 
-    keywordFunction() {
-        return this.generateKeywordFunction();
-    }
+				const validate = async function (data /*, dataCxt */) {
+					try {
+						return await baseValidate(data);
+					} catch (error) {
+						if (error instanceof ValidationError) {
+							// Convert the error message to match legacy expectations
+							const parentText = mapped.targets && mapped.targets.length
+								? mapped.targets.join(', ')
+								: 'the specified term';
+							
+							const first = error.errors && error.errors[0];
+							let message = `Provided term is not child of ${parentText}`;
+							
+							if (first && typeof first.message === 'string') {
+								if (/obsolete/i.test(first.message) || /leaf node/i.test(first.message)) {
+									message = first.message;
+								}
+							}
 
-    isAsync() {
-        return true;
-    }
+							throw new ValidationError([{
+								keyword: 'isChildTermOf',
+								instancePath: '',
+								schemaPath: '',
+								params: {},
+								message
+							}]);
+						}
+						throw error;
+					}
+				};
 
-    generateKeywordFunction() {
-        return async (schema, data) => {
-            try {
-                // Validate required fields for isChildTermOf
-                if (!schema.parentTerm || !schema.ontologyId) {
-                    const error = new CustomAjvError(
-                        "isChildTermOf",
-                        "Missing required variable in schema isChildTermOf, required properties are: parentTerm and ontologyId.",
-                        {keyword: "isChildTermOf"}
-                    );
-                    throw new Ajv.ValidationError([error]);
-                }
+				return validate;
+			}
+		};
+	}
 
-                // Add deprecation warning
-                logger.warn("isChildTermOf keyword is deprecated. Please use relationshipRestriction instead for new schemas.");
+	getKeyword() {
+		return this.getKeywordDefinition();
+	}
 
-                // Convert isChildTermOf schema to relationshipRestriction format
-                const relationshipSchema = {
-                    ontologies: [schema.ontologyId],
-                    targets: [schema.parentTerm],
-                    relationType: ["rdfs:subClassOf*"],
-                    includeSelf: false, // isChildTermOf traditionally doesn't include self
-                    allowObsolete: false,
-                    allowImported: true,
-                    directChild: false,
-                    leafNode: false,
-                    idFormat: "ANY"
-                };
+	generateKeywordFunction() {
+		const def = this.getKeywordDefinition();
+		return async (schema, data) => {
+			const validate = def.compile(schema);
+			return await validate(data);
+		};
+	}
 
-                logger.debug(`IsChildTermOf delegating to RelationshipRestriction for term: ${data}`);
-
-                // Use the relationshipRestriction validation function
-                const relationshipValidateFunction = this.relationshipRestriction.generateKeywordFunction();
-                
-                try {
-                    const result = await relationshipValidateFunction(relationshipSchema, data);
-                    return result;
-                } catch (error) {
-                    // Convert relationshipRestriction errors to isChildTermOf format
-                    if (error instanceof ajv.ValidationError) {
-                        const isChildTermOfErrors = error.errors.map(err => {
-                            // Convert the error message to match isChildTermOf expectations
-                            let message = err.message || err.toString();
-                            
-                            // Handle various error types that should be converted to "not child of"
-                            if (message.includes("does not satisfy relationship") ||
-                                message.includes("OLS API error") ||
-                                message.includes("found in ontology") ||
-                                message.includes("not found") ||
-                                message.includes("Failed to parse identifier")) {
-                                message = `Provided term is not child of [${schema.parentTerm}]`;
-                            }
-                            
-                            return new CustomAjvError("isChildTermOf", message, {keyword: "isChildTermOf"});
-                        });
-                        throw new ajv.ValidationError(isChildTermOfErrors);
-                    }
-                    throw error;
-                }
-
-            } catch (error) {
-                if (error instanceof ajv.ValidationError) {
-                    throw error;
-                }
-                logger.error(`IsChildTermOf validation error: ${error.message}`);
-                const customError = new CustomAjvError(
-                    "isChildTermOf", 
-                    "Something went wrong while validating term, try again." + error.message,
-                    {keyword: "isChildTermOf"}
-                );
-                throw new Ajv.ValidationError([customError]);
-            }
-        };
-    }
+	configure(ajvInstance) {
+		ajvInstance.addKeyword(this.getKeywordDefinition());
+		return ajvInstance;
+	}
 }
 
 module.exports = IsChildTermOf;

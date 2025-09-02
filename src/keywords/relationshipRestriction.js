@@ -1,40 +1,299 @@
 const axios = require('axios');
-const ajv = require("ajv").default;
-const CustomAjvError = require("../model/custom-ajv-error");
-const { logger } = require("../utils/winston");
-const { IdentifierParser, IdFormat } = require("../utils/idParsing");
-const { getCache, keyFor } = require("../utils/cache");
+const ols = require('../services/olsClient');
+const { doubleEncodeIri } = require('../utils/iri');
+const { ValidationError } = require('ajv');
 
-/**
- * RelationshipRestriction keyword for validating arbitrary ontology relationship paths
- * Extends beyond simple subclass validation to support complex relationship chains
- */
+// Supported relation tokens
+const SUPPORTED_REL = 'rdfs:subClassOf';
+
+function parseStep(step) {
+	if (typeof step !== 'string' || !step.startsWith(SUPPORTED_REL)) return null;
+	const op = step.substring(SUPPORTED_REL.length);
+	if (op !== '' && op !== '*' && op !== '+') return null;
+	return { base: SUPPORTED_REL, op };
+}
+
+function normalizeOntologyName(ontology) {
+	// Strip "obo:" prefix if present
+	if (typeof ontology === 'string' && ontology.startsWith('obo:')) {
+		return ontology.substring(4);
+	}
+	return ontology;
+}
+
+function normalizeBool(v, def) {
+	return typeof v === 'boolean' ? v : def;
+}
+
+function validateFormat(data, idFormat) {
+	if (idFormat === 'CURIE') {
+		const curiePattern = /^[A-Za-z0-9_-]+:[A-Za-z0-9_.-]+$/;
+		return curiePattern.test(data);
+	} else if (idFormat === 'IRI') {
+		return data.startsWith('http://') || data.startsWith('https://');
+	}
+	return true; // ANY format or unspecified
+}
+
+function looksLikeIri(x) {
+	return typeof x === 'string' && (x.startsWith('http://') || x.startsWith('https://'));
+}
+
+async function resolveEntity(ontology, id) {
+	return looksLikeIri(id) ? ols.fetchEntityByIri(ontology, id)
+		: ols.fetchEntityByCurie(ontology, id);
+}
+
+async function isLeaf(ontology, entity) {
+	if (Object.prototype.hasOwnProperty.call(entity, 'has_children')) {
+		return entity.has_children === false;
+	}
+	try {
+		const children = await ols.getChildren(ontology, entity.iri);
+		return Array.isArray(children) ? children.length === 0
+			: (children && children._embedded && Array.isArray(children._embedded.terms) ? children._embedded.terms.length === 0 : true);
+	} catch {
+		return false;
+	}
+}
+
+async function checkPath(ontology, sourceEntity, targetEntity, step) {
+	if (step.op === '') {
+		const parents = await ols.getParents(ontology, sourceEntity.iri);
+		const parentIris = Array.isArray(parents) ? parents
+			: (parents && parents._embedded && parents._embedded.terms ? parents._embedded.terms.map(t => t.iri) : []);
+		return parentIris.includes(targetEntity.iri);
+	}
+
+	const ancestors = await ols.getAncestors(ontology, sourceEntity.iri);
+	const ancestorIris = Array.isArray(ancestors) ? ancestors
+		: (ancestors && ancestors._embedded && ancestors._embedded.terms ? ancestors._embedded.terms.map(t => t.iri) : []);
+
+	if (step.op === '*') {
+		return sourceEntity.iri === targetEntity.iri || ancestorIris.includes(targetEntity.iri);
+	}
+
+	return ancestorIris.includes(targetEntity.iri);
+}
+
+module.exports = {
+	keyword: 'relationshipRestriction',
+	type: 'string',
+	async: true,
+	errors: true,
+	metaSchema: {
+		type: 'object',
+		additionalProperties: false,
+		properties: {
+			ontologies: {
+				type: 'array',
+				minItems: 1,
+				items: { type: 'string', minLength: 1 }
+			},
+			targets: {
+				type: 'array',
+				minItems: 1,
+				items: { type: 'string', minLength: 1 }
+			},
+			relationType: {
+				type: 'array',
+				minItems: 1,
+				items: {
+					type: 'string',
+					pattern: '^rdfs:subClassOf(\\*|\\+)?$'
+				}
+			},
+			idFormat: {
+				type: 'string',
+				enum: ['CURIE', 'IRI', 'ANY']
+			},
+			allowObsolete: { type: 'boolean' },
+			allowImported: { type: 'boolean' },
+			leafNode: { type: 'boolean' },
+			includeSelf: { type: 'boolean' },
+			directChild: { type: 'boolean' }
+		}
+	},
+	compile(options /* , parentSchema, it */) {
+		const ontologies = options.ontologies || [];
+		const targets = options.targets || [];
+		const relationType = options.relationType || [];
+		const idFormat = options.idFormat || 'CURIE';
+		const allowObsolete = normalizeBool(options.allowObsolete, true);
+		const allowImported = normalizeBool(options.allowImported, true);
+		const leafNode = normalizeBool(options.leafNode, false);
+		const includeSelf = normalizeBool(options.includeSelf, false);
+		const directChild = normalizeBool(options.directChild, false);
+
+		const validate = async function (data /* , dataCxt */) {
+			console.log(`RelationshipRestriction: validating data: ${data}`);
+			
+			if (typeof data !== 'string') return true;
+
+			// Runtime validation of options
+			const configErrors = [];
+			if (!Array.isArray(ontologies) || ontologies.length === 0)
+				configErrors.push('ontologies must be a non-empty array');
+			if (!Array.isArray(targets) || targets.length === 0)
+				configErrors.push('targets must be a non-empty array');
+			if (!Array.isArray(relationType) || relationType.length === 0)
+				configErrors.push('relationType must be a non-empty array');
+			if (configErrors.length) {
+				validate.errors = [{
+					keyword: 'relationshipRestriction',
+					instancePath: '',
+					schemaPath: '',
+					params: {},
+					message: configErrors.join('; ')
+				}];
+				return false;
+			}
+
+			const steps = relationType.map(parseStep);
+			if (steps.some(s => !s)) {
+				validate.errors = [{
+					keyword: 'relationshipRestriction',
+					instancePath: '',
+					schemaPath: '',
+					params: {},
+					message: 'unsupported relationType specified'
+				}];
+				return false;
+			}
+
+			// Format validation first
+			if (!validateFormat(data, idFormat)) {
+				validate.errors = [{
+					keyword: 'relationshipRestriction',
+					instancePath: '',
+					schemaPath: '',
+					params: { format: idFormat },
+					message: `must be in ${idFormat} format`
+				}];
+				return false;
+			}
+
+			let lastError = null;
+
+			for (const ont of ontologies) {
+				const normalizedOnt = normalizeOntologyName(ont);
+				console.log(`Checking ontology: ${ont} (normalized: ${normalizedOnt})`);
+				
+				try {
+					console.log(`Resolving entity: ${data} in ontology: ${normalizedOnt}`);
+					const source = await resolveEntity(normalizedOnt, data);
+					console.log(`Resolved source entity:`, source);
+					
+					if (!source || !source.iri) {
+						lastError = `Term not found in ontology ${ont}`;
+						console.log(lastError);
+						continue;
+					}
+
+					const isObsolete = !!(source.is_obsolete ?? source.obsolete ?? source.isObsolete);
+					if (!allowObsolete && isObsolete) {
+						validate.errors = [{
+							keyword: 'relationshipRestriction',
+							instancePath: '',
+							schemaPath: '',
+							params: {},
+							message: 'Provided term is obsolete'
+						}];
+						return false;
+					}
+					
+					const isDefining = !!(source.is_defining_ontology ?? source.isDefiningOntology ?? true);
+					if (!allowImported && !isDefining) {
+						lastError = `Provided term is imported in ${ont}`;
+						continue;
+					}
+
+					if (leafNode) {
+						const leaf = await isLeaf(normalizedOnt, source);
+						if (!leaf) {
+							validate.errors = [{
+								keyword: 'relationshipRestriction',
+								instancePath: '',
+								schemaPath: '',
+								params: {},
+								message: 'Provided term is not a leaf node'
+							}];
+							return false;
+						}
+					}
+
+					const targetEntities = [];
+					console.log(`Resolving targets: ${targets.join(', ')}`);
+					for (const t of targets) {
+						console.log(`Resolving target: ${t} in ontology: ${normalizedOnt}`);
+						const te = await resolveEntity(normalizedOnt, t);
+						console.log(`Resolved target entity:`, te);
+						if (te && te.iri) targetEntities.push(te);
+					}
+					console.log(`Found ${targetEntities.length} target entities`);
+					
+					if (targetEntities.length === 0) {
+						lastError = `Targets not found in ontology ${ont}`;
+						console.log(lastError);
+						continue;
+					}
+
+					let satisfied = false;
+					for (const te of targetEntities) {
+						// Handle includeSelf option
+						if (includeSelf && source.iri === te.iri) {
+							satisfied = true;
+							break;
+						}
+
+						for (let i = 0; i < steps.length; i++) {
+							let step = steps[i];
+
+							// if schema asked for transitive but user wants direct child for the final hop,
+							// coerce the last hop to direct
+							if (directChild && i === steps.length - 1 && step.base === 'rdfs:subClassOf') {
+								step = { base: 'rdfs:subClassOf', op: '' };
+							}
+							
+							const ok = await checkPath(normalizedOnt, source, te, step);
+							if (ok) {
+								satisfied = true;
+								break;
+							}
+						}
+						if (satisfied) break;
+					}
+
+					if (satisfied) {
+						validate.errors = null;
+						return true;
+					}
+
+					lastError = 'does not satisfy relationship constraint';
+				} catch (e) {
+					lastError = e && e.message ? e.message : 'Ontology check failed';
+				}
+			}
+
+			validate.errors = [{
+				keyword: 'relationshipRestriction',
+				instancePath: '',
+				schemaPath: '',
+				params: {},
+				message: lastError || 'Relationship constraint failed'
+			}];
+			return false;
+		};
+
+		return validate;
+	}
+};
+
+// Keep thin class wrapper for compatibility
 class RelationshipRestriction {
-    constructor(keywordName, olsBaseUrl) {
-        this.keywordName = keywordName || "relationshipRestriction";
-        this.olsBaseUrl = olsBaseUrl || "https://www.ebi.ac.uk/ols4/";
-        this.identifierParser = new IdentifierParser(this.olsBaseUrl);
-    }
-
-    /**
-     * Configure the AJV instance with the relationshipRestriction keyword
-     * @param {object} ajv - AJV instance
-     * @returns {object} Configured AJV instance
-     */
-    configure(ajv) {
-        const keywordDefinition = {
-            keyword: this.keywordName,
-            async: true,
-            type: "string",
-            validate: this.generateKeywordFunction(),
-            errors: true
-        };
-
-        return ajv.addKeyword(keywordDefinition);
-    }
-
-    keywordFunction() {
-        return this.generateKeywordFunction();
+    constructor(keywordName = 'relationshipRestriction', olsBaseUrl = 'https://www.ebi.ac.uk/ols4/') {
+        this.keywordName = keywordName;
+        this.olsBaseUrl = olsBaseUrl;
     }
 
     isAsync() {
@@ -45,482 +304,13 @@ class RelationshipRestriction {
         return true;
     }
 
-    /**
-     * Generate the validation function for the keyword
-     * @returns {Function} Validation function
-     */
     generateKeywordFunction() {
-        const generateErrorObject = (message) => {
-            return new CustomAjvError("relationshipRestriction", message, {});
-        };
-
         return async (schema, data) => {
-            try {
-                // Validate schema structure
-                const validationResult = this._validateSchema(schema);
-                if (!validationResult.valid) {
-                    throw new ajv.ValidationError([generateErrorObject(validationResult.message)]);
-                }
-
-                // Extract and normalize options
-                const options = this._normalizeOptions(schema);
-                
-                logger.debug(`RelationshipRestriction validation for term: ${data} with options: ${JSON.stringify(options)}`);
-
-                // Step 1: Parse the input identifier to find which ontology it belongs to
-                let parsedTerm;
-                try {
-                    parsedTerm = await this.identifierParser.parseIdentifier(
-                        data, 
-                        options.ontologies, // Try all allowed ontologies
-                        {
-                            idFormat: options.idFormat,
-                            allowObsolete: options.allowObsolete,
-                            cacheResults: true
-                        }
-                    );
-                } catch (error) {
-                    logger.debug(`Failed to parse identifier ${data} in any allowed ontology: ${error.message}`);
-                    throw new ajv.ValidationError([generateErrorObject(error.message)]);
-                }
-
-                // Step 2: Normalize target identifiers to IRIs for comparison
-                const normalizedTargets = await this._normalizeTargets(options.targets, options.ontologies);
-
-                // Step 3: Check metadata constraints
-                if (!options.allowImported && parsedTerm.isImported) {
-                    const message = `Term ${data} is imported in ontology ${parsedTerm.ontology} (imported terms not allowed)`;
-                    throw new ajv.ValidationError([generateErrorObject(message)]);
-                }
-
-                // Step 4: Handle includeSelf shortcut
-                if (options.includeSelf && normalizedTargets.some(target => target === parsedTerm.iri)) {
-                    logger.debug(`Term ${data} matches target directly with includeSelf enabled`);
-                    
-                    // Still need to check leafNode constraint if specified
-                    if (options.leafNode) {
-                        const isLeaf = await this._checkIsLeafNode(parsedTerm.iri, parsedTerm.ontology);
-                        if (!isLeaf) {
-                            const message = `Term ${data} is not a leaf node in ontology ${parsedTerm.ontology}`;
-                            throw new ajv.ValidationError([generateErrorObject(message)]);
-                        }
-                    }
-                    
-                    return true;
-                }
-
-                // Step 5: Traverse relationship path
-                const pathResult = await this._traverseRelationshipPath(
-                    parsedTerm.iri,
-                    parsedTerm.ontology,
-                    options.relationType,
-                    normalizedTargets,
-                    options.directChild
-                );
-
-                if (!pathResult.found) {
-                    logger.debug(`No relationship path found in ontology ${parsedTerm.ontology}`);
-                    const message = `Term ${data} does not satisfy relationship ${options.relationType.join(' -> ')} to targets [${options.targets.join(', ')}] in ontology ${parsedTerm.ontology}`;
-                    throw new ajv.ValidationError([generateErrorObject(message)]);
-                }
-
-                // Step 6: Check leafNode constraint if specified
-                if (options.leafNode) {
-                    const isLeaf = await this._checkIsLeafNode(parsedTerm.iri, parsedTerm.ontology);
-                    if (!isLeaf) {
-                        const message = `Term ${data} is not a leaf node in ontology ${parsedTerm.ontology}`;
-                        throw new ajv.ValidationError([generateErrorObject(message)]);
-                    }
-                }
-
-                logger.debug(`RelationshipRestriction validation successful for term: ${data} in ontology ${parsedTerm.ontology}`);
-                return true;
-
-            } catch (error) {
-                if (error instanceof ajv.ValidationError) {
-                    throw error;
-                }
-                logger.error(`Unexpected error in relationshipRestriction: ${error.message}`);
-                throw new ajv.ValidationError([generateErrorObject(`Validation failed: ${error.message}`)]);
-            }
+            const validate = module.exports.compile(schema);
+            return await validate(data);
         };
-    }
-
-    /**
-     * Validate the schema configuration
-     * @private
-     * @param {object} schema - Schema configuration
-     * @returns {object} Validation result with valid flag and message
-     */
-    _validateSchema(schema) {
-        if (!schema || typeof schema !== 'object') {
-            return { valid: false, message: "relationshipRestriction must be an object" };
-        }
-
-        if (!Array.isArray(schema.ontologies) || schema.ontologies.length === 0) {
-            return { valid: false, message: "ontologies must be a non-empty array" };
-        }
-
-        if (!Array.isArray(schema.targets) || schema.targets.length === 0) {
-            return { valid: false, message: "targets must be a non-empty array" };
-        }
-
-        if (!Array.isArray(schema.relationType) || schema.relationType.length === 0) {
-            return { valid: false, message: "relationType must be a non-empty array" };
-        }
-
-        // Validate idFormat if specified
-        if (schema.idFormat && !Object.values(IdFormat).includes(schema.idFormat)) {
-            return { valid: false, message: `idFormat must be one of: ${Object.values(IdFormat).join(', ')}` };
-        }
-
-        return { valid: true };
-    }
-
-    /**
-     * Normalize and set defaults for schema options
-     * @private
-     * @param {object} schema - Raw schema configuration
-     * @returns {object} Normalized options
-     */
-    _normalizeOptions(schema) {
-        return {
-            ontologies: schema.ontologies.map(ont => ont.toLowerCase().replace(/^obo:/, '')),
-            targets: schema.targets,
-            relationType: schema.relationType,
-            idFormat: schema.idFormat || IdFormat.ANY,
-            includeSelf: schema.includeSelf || false,
-            allowImported: schema.allowImported !== false, // default true
-            allowObsolete: schema.allowObsolete || false,
-            directChild: schema.directChild || false,
-            leafNode: schema.leafNode || false
-        };
-    }
-
-    /**
-     * Traverse the relationship path to find if any target is reachable
-     * @private
-     * @param {string} startIri - Starting term IRI
-     * @param {string} ontology - Ontology ID
-     * @param {Array} relationChain - Array of relations to traverse
-     * @param {Array} targets - Target IRIs to match
-     * @param {boolean} directChild - If true, enforce single-hop for subclass relations
-     * @returns {Promise<object>} Result with found flag and matched target
-     */
-    async _traverseRelationshipPath(startIri, ontology, relationChain, targets, directChild) {
-        let currentNodes = new Set([startIri]);
-        
-        logger.debug(`Starting relationship traversal from ${startIri} with chain: ${relationChain.join(' -> ')}`);
-
-        for (let i = 0; i < relationChain.length; i++) {
-            const relation = relationChain[i];
-            const isTransitive = relation.endsWith('*');
-            const baseRelation = isTransitive ? relation.slice(0, -1) : relation;
-            const isLastStep = i === relationChain.length - 1;
-
-            logger.debug(`Step ${i + 1}: Processing relation ${relation} (${isTransitive ? 'transitive' : 'direct'})`);
-
-            let nextNodes = new Set();
-
-            for (const nodeIri of currentNodes) {
-                let reachableNodes;
-                
-                if (isTransitive) {
-                    reachableNodes = await this._getTransitiveRelated(nodeIri, ontology, baseRelation, directChild && isLastStep);
-                } else {
-                    reachableNodes = await this._getDirectlyRelated(nodeIri, ontology, baseRelation);
-                }
-
-                reachableNodes.forEach(node => nextNodes.add(node));
-            }
-
-            currentNodes = nextNodes;
-
-            // Check if we've reached any targets at this step
-            if (isLastStep) {
-                for (const target of targets) {
-                    if (currentNodes.has(target)) {
-                        logger.debug(`Found target ${target} in final step`);
-                        return { found: true, target };
-                    }
-                }
-            }
-
-            // If no nodes found, path fails
-            if (currentNodes.size === 0) {
-                logger.debug(`No nodes found after relation ${relation}, path terminates`);
-                break;
-            }
-        }
-
-        return { found: false };
-    }
-
-    /**
-     * Get all transitively related terms via a specific relation
-     * @private
-     * @param {string} termIri - Term IRI
-     * @param {string} ontology - Ontology ID  
-     * @param {string} relation - Relation IRI
-     * @param {boolean} directOnly - If true, return only direct relations
-     * @returns {Promise<Set>} Set of related term IRIs
-     */
-    async _getTransitiveRelated(termIri, ontology, relation, directOnly) {
-        const cache = getCache();
-        const cacheKey = keyFor(this.olsBaseUrl, 'transitive', termIri, ontology, relation, directOnly);
-        
-        if (cache.has(cacheKey)) {
-            logger.debug(`Cache hit for transitive relation: ${relation}`);
-            return new Set(cache.get(cacheKey));
-        }
-
-        let related = new Set();
-
-        // Handle common subclass relation efficiently
-        if (relation === 'rdfs:subClassOf' || relation === 'http://www.w3.org/2000/01/rdf-schema#subClassOf') {
-            if (directOnly) {
-                related = await this._getDirectParents(termIri, ontology);
-            } else {
-                related = await this._getAllAncestors(termIri, ontology);
-            }
-        } else {
-            // For other relations, implement iterative expansion
-            related = await this._expandRelationIteratively(termIri, ontology, relation, directOnly);
-        }
-
-        // Cache the result
-        cache.set(cacheKey, Array.from(related));
-        return related;
-    }
-
-    /**
-     * Get directly related terms via a specific relation
-     * @private
-     * @param {string} termIri - Term IRI
-     * @param {string} ontology - Ontology ID
-     * @param {string} relation - Relation IRI
-     * @returns {Promise<Set>} Set of related term IRIs
-     */
-    async _getDirectlyRelated(termIri, ontology, relation) {
-        // Handle specific relation types
-        if (relation === 'rdf:type' || relation === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type') {
-            return await this._getInstanceTypes(termIri, ontology);
-        } else if (relation === 'rdfs:subClassOf' || relation === 'http://www.w3.org/2000/01/rdf-schema#subClassOf') {
-            return await this._getDirectParents(termIri, ontology);
-        } else {
-            // Generic relation handling
-            return await this._getGenericRelated(termIri, ontology, relation);
-        }
-    }
-
-    /**
-     * Get all ancestor terms (superclasses) using OLS API
-     * @private
-     * @param {string} termIri - Term IRI
-     * @param {string} ontology - Ontology ID
-     * @returns {Promise<Set>} Set of ancestor IRIs
-     */
-    async _getAllAncestors(termIri, ontology) {
-        try {
-            const encodedIri = encodeURIComponent(termIri);
-            const url = `${this.olsBaseUrl}api/ontologies/${ontology}/terms/${encodedIri}/hierarchicalAncestors`;
-            
-            logger.debug(`Fetching ancestors from: ${url}`);
-            
-            const response = await axios.get(url, {
-                timeout: 10000,
-                validateStatus: status => status >= 200 && status < 300
-            });
-
-            const ancestors = new Set();
-            if (response.data && response.data._embedded && response.data._embedded.terms) {
-                response.data._embedded.terms.forEach(term => {
-                    if (term.iri) {
-                        ancestors.add(term.iri);
-                    }
-                });
-            }
-
-            logger.debug(`Found ${ancestors.size} ancestors for ${termIri}`);
-            return ancestors;
-
-        } catch (error) {
-            logger.warn(`Failed to fetch ancestors for ${termIri}: ${error.message}`);
-            return new Set();
-        }
-    }
-
-    /**
-     * Get direct parent terms using OLS API
-     * @private
-     * @param {string} termIri - Term IRI
-     * @param {string} ontology - Ontology ID
-     * @returns {Promise<Set>} Set of parent IRIs
-     */
-    async _getDirectParents(termIri, ontology) {
-        try {
-            const encodedIri = encodeURIComponent(termIri);
-            const url = `${this.olsBaseUrl}api/ontologies/${ontology}/terms/${encodedIri}/hierarchicalParents`;
-            
-            const response = await axios.get(url, {
-                timeout: 10000,
-                validateStatus: status => status >= 200 && status < 300
-            });
-
-            const parents = new Set();
-            if (response.data && response.data._embedded && response.data._embedded.terms) {
-                response.data._embedded.terms.forEach(term => {
-                    if (term.iri) {
-                        parents.add(term.iri);
-                    }
-                });
-            }
-
-            return parents;
-
-        } catch (error) {
-            logger.warn(`Failed to fetch parents for ${termIri}: ${error.message}`);
-            return new Set();
-        }
-    }
-
-    /**
-     * Get instance types for a term (rdf:type relations)
-     * @private
-     * @param {string} termIri - Term IRI
-     * @param {string} ontology - Ontology ID
-     * @returns {Promise<Set>} Set of type IRIs
-     */
-    async _getInstanceTypes(termIri, ontology) {
-        // For OLS, individuals typically appear as children of their classes
-        // This is a simplified implementation - may need adjustment based on specific ontology structure
-        logger.debug(`Getting instance types for ${termIri} (simplified implementation)`);
-        return new Set(); // TODO: Implement proper instance type resolution
-    }
-
-    /**
-     * Get related terms via a generic relation property
-     * @private
-     * @param {string} termIri - Term IRI
-     * @param {string} ontology - Ontology ID
-     * @param {string} relation - Relation IRI
-     * @returns {Promise<Set>} Set of related IRIs
-     */
-    async _getGenericRelated(termIri, ontology, relation) {
-        // This would require more sophisticated OLS API usage or SPARQL queries
-        // For now, return empty set as most use cases focus on hierarchical relations
-        logger.debug(`Generic relation ${relation} for ${termIri} - not fully implemented`);
-        return new Set();
-    }
-
-    /**
-     * Expand relations iteratively for transitive closure
-     * @private
-     * @param {string} startIri - Starting term IRI
-     * @param {string} ontology - Ontology ID
-     * @param {string} relation - Relation IRI
-     * @param {boolean} directOnly - If true, return only direct relations
-     * @returns {Promise<Set>} Set of related IRIs
-     */
-    async _expandRelationIteratively(startIri, ontology, relation, directOnly) {
-        const visited = new Set();
-        const toVisit = [startIri];
-        const related = new Set();
-        
-        if (directOnly) {
-            return await this._getDirectlyRelated(startIri, ontology, relation);
-        }
-
-        while (toVisit.length > 0) {
-            const current = toVisit.shift();
-            if (visited.has(current)) continue;
-            
-            visited.add(current);
-            
-            const directlyRelated = await this._getDirectlyRelated(current, ontology, relation);
-            
-            for (const relatedIri of directlyRelated) {
-                related.add(relatedIri);
-                if (!visited.has(relatedIri)) {
-                    toVisit.push(relatedIri);
-                }
-            }
-        }
-
-        return related;
-    }
-
-    /**
-     * Check if a term is a leaf node (has no children)
-     * @private
-     * @param {string} termIri - Term IRI
-     * @param {string} ontology - Ontology ID
-     * @returns {Promise<boolean>} True if term is a leaf node
-     */
-    async _checkIsLeafNode(termIri, ontology) {
-        try {
-            const encodedIri = encodeURIComponent(termIri);
-            const url = `${this.olsBaseUrl}api/ontologies/${ontology}/terms/${encodedIri}/hierarchicalChildren`;
-            
-            const response = await axios.get(url, {
-                timeout: 10000,
-                validateStatus: status => status >= 200 && status < 300
-            });
-
-            // If no children found, it's a leaf node
-            const hasChildren = response.data && 
-                               response.data._embedded && 
-                               response.data._embedded.terms && 
-                               response.data._embedded.terms.length > 0;
-
-            return !hasChildren;
-
-        } catch (error) {
-            logger.warn(`Failed to check leaf status for ${termIri}: ${error.message}`);
-            // If we can't determine, assume it's not a leaf to be safe
-            return false;
-        }
-    }
-
-    /**
-     * Normalize target identifiers to IRIs for comparison
-     * @private
-     * @param {Array} targets - Array of target identifiers (CURIEs, IRIs, or short forms)
-     * @param {Array} ontologies - Array of ontology IDs for context
-     * @returns {Promise<Array>} Array of normalized IRI strings
-     */
-    async _normalizeTargets(targets, ontologies) {
-        const normalizedTargets = [];
-        
-        for (const target of targets) {
-            try {
-                // If it's already an IRI, use it as-is
-                if (this.identifierParser.isIri(target)) {
-                    normalizedTargets.push(target);
-                    continue;
-                }
-
-                // Try to resolve CURIE or short form to IRI
-                const parsedTarget = await this.identifierParser.parseIdentifier(
-                    target,
-                    ontologies,
-                    {
-                        idFormat: 'ANY',
-                        allowObsolete: true, // Allow obsolete targets for flexibility
-                        cacheResults: true
-                    }
-                );
-                normalizedTargets.push(parsedTarget.iri);
-            } catch (error) {
-                // If we can't resolve the target, keep it as-is for comparison
-                // This allows for target IRIs that might not be in the specified ontologies
-                logger.debug(`Could not resolve target ${target}, using as-is: ${error.message}`);
-                normalizedTargets.push(target);
-            }
-        }
-
-        return normalizedTargets;
     }
 }
 
-module.exports = RelationshipRestriction;
+// Export both the keyword definition and the class
+module.exports.RelationshipRestriction = RelationshipRestriction;

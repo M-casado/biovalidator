@@ -24,86 +24,119 @@ describe("asyncCustomKeywords test suite", () => {
     // Setup axios mocking
     mockAxios = new MockAdapter(axios);
     
-    // Mock OLS responses for MONDO:0018177 (glioblastoma) that's used in the test
-    mockAxios.onGet(/.*\/api\/terms.*obo_id=MONDO:0018177.*/).reply(200, {
-      _embedded: {
-        terms: [{
-          iri: "http://purl.obolibrary.org/obo/MONDO_0018177",
-          ontology_name: "mondo",
-          label: "glioblastoma",
-          is_obsolete: false
-        }]
-      }
-    });
-
-    // Also match for fallback without ontology filter  
-    mockAxios.onGet(/.*\/api\/terms.*/).reply((config) => {
-      if (config.params?.obo_id === 'MONDO:0018177') {
+    // Mock all OLS API calls with comprehensive patterns
+    
+    // Mock OLS v1 API calls (fetchEntityByCurie)
+    mockAxios.onGet(/.*\/ols\/api\/ontologies\/.*\/terms.*obo_id=.*/).reply((config) => {
+      console.log(`Mock OLS v1 request: ${config.url}`);
+      const oboId = config.params?.obo_id || config.url.match(/obo_id=([^&]+)/)?.[1];
+      
+      if (oboId === 'MONDO:0018177') {
         return [200, {
           _embedded: {
             terms: [{
               iri: "http://purl.obolibrary.org/obo/MONDO_0018177",
-              ontology_name: "mondo", 
+              ontology_name: "mondo",
               label: "glioblastoma",
               is_obsolete: false
             }]
           }
         }];
       }
-      if (config.params?.obo_id === 'MONDO:0000001') {
+      if (oboId === 'MONDO:0000001') {
         return [200, {
           _embedded: {
             terms: [{
               iri: "http://purl.obolibrary.org/obo/MONDO_0000001",
-              ontology_name: "mondo", 
+              ontology_name: "mondo",
               label: "disease",
               is_obsolete: false
             }]
           }
         }];
       }
-      if (config.params?.obo_id === 'PATO:0000461') {
+      if (oboId === 'PATO:0000461') {
         return [200, {
           _embedded: {
             terms: [{
               iri: "http://purl.obolibrary.org/obo/PATO_0000461",
-              ontology_name: "pato", 
+              ontology_name: "pato",
               label: "normal",
               is_obsolete: false
             }]
           }
         }];
       }
+      
+      console.log(`No mock for obo_id: ${oboId}`);
       return [404, { error: "Not found" }];
     });
 
-    // Mock OLS v2 entities endpoint for MONDO:0018177
-    mockAxios.onGet(/.*\/api\/v2\/entities\/.*MONDO_0018177.*/).reply(200, {
-      iri: "http://purl.obolibrary.org/obo/MONDO_0018177",
-      ontologyId: "mondo",
-      label: "glioblastoma",
-      is_obsolete: false
-    });
-
-    // Mock ancestors for MONDO:0018177 - should include MONDO:0000001 (disease)
-    mockAxios.onGet(/.*\/api\/ontologies\/mondo\/terms\/.*MONDO_0018177.*\/hierarchicalAncestors.*/).reply(200, {
-      _embedded: {
-        terms: [
-          {
-            iri: "http://purl.obolibrary.org/obo/MONDO_0000001",
-            label: "disease"
-          },
-          {
-            iri: "http://purl.obolibrary.org/obo/MONDO_0005109", 
-            label: "cancer"
+    // Mock OLS v4 API calls (getAncestors, getParents, getChildren)
+    mockAxios.onGet(/.*\/ols4\/api\/ontologies\/.*\/terms\/.*\/hierarchicalAncestors.*/).reply((config) => {
+      console.log(`Mock OLS v4 ancestors request: ${config.url}`);
+      
+      // Check if it's for MONDO:0018177 (glioblastoma)
+      if (config.url.includes('MONDO') && config.url.includes('0018177')) {
+        return [200, {
+          _embedded: {
+            terms: [
+              {
+                iri: "http://purl.obolibrary.org/obo/MONDO_0000001",
+                label: "disease"
+              },
+              {
+                iri: "http://purl.obolibrary.org/obo/MONDO_0005109", 
+                label: "cancer"
+              }
+            ]
           }
-        ]
+        }];
       }
+      
+      console.log(`No ancestors mock for URL: ${config.url}`);
+      return [200, { _embedded: { terms: [] } }];
     });
 
-    // Fallback for any unmocked requests
+    // Mock other OLS v4 endpoints
+    mockAxios.onGet(/.*\/ols4\/api\/ontologies\/.*\/terms\/.*\/parents.*/).reply((config) => {
+      console.log(`Mock OLS v4 parents request: ${config.url}`);
+      return [200, { _embedded: { terms: [] } }];
+    });
+
+    mockAxios.onGet(/.*\/ols4\/api\/ontologies\/.*\/terms\/.*\/children.*/).reply((config) => {
+      console.log(`Mock OLS v4 children request: ${config.url}`);
+      return [200, { _embedded: { terms: [] } }];
+    });
+
+    // Mock individual term fetches by IRI (OLS v4)
+    mockAxios.onGet(/.*\/ols4\/api\/ontologies\/.*\/terms\/.*/).reply((config) => {
+      console.log(`Mock OLS v4 term request: ${config.url}`);
+      
+      if (config.url.includes('MONDO') && config.url.includes('0018177')) {
+        return [200, {
+          iri: "http://purl.obolibrary.org/obo/MONDO_0018177",
+          ontology_name: "mondo",
+          label: "glioblastoma",
+          is_obsolete: false
+        }];
+      }
+      if (config.url.includes('MONDO') && config.url.includes('0000001')) {
+        return [200, {
+          iri: "http://purl.obolibrary.org/obo/MONDO_0000001",
+          ontology_name: "mondo",
+          label: "disease",
+          is_obsolete: false
+        }];
+      }
+      
+      return [404, { error: "Not found" }];
+    });
+
+    // Fallback for any unmocked requests - log them for debugging
     mockAxios.onAny().reply(config => {
-      console.warn(`Unmocked request: ${config.method?.toUpperCase()} ${config.url}`);
+      console.warn(`UNMOCKED REQUEST: ${config.method?.toUpperCase()} ${config.url}`);
+      console.warn(`Params:`, config.params);
       return [404, { error: "Not found" }];
     });
   });

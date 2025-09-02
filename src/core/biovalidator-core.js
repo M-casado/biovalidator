@@ -3,8 +3,8 @@ const addFormats = require("ajv-formats");
 const axios = require('axios');
 const AppError = require("../model/application-error");
 const {getFiles, readFile} = require("../utils/file_utils");
-const {isChildTermOf, isValidTerm, isValidTaxonomy, RelationshipRestriction} = require("../keywords");
-const GraphRestriction = require("../keywords/graphRestriction");
+const { isChildTermOf, isValidTerm, isValidTaxonomy, GraphRestriction } = require('../keywords');
+const registerKeywords = require('../keywords');
 const IsValidIdentifier = require("../keywords/isvalididentifier");
 const ValidationError = require("../model/validation-error");
 const {logger} = require("../utils/winston");
@@ -12,12 +12,10 @@ const NodeCache = require("node-cache");
 const constants = require("../utils/constants");
 
 const customKeywordValidators = [
-    new isChildTermOf(null, constants.OLS_SEARCH_URL),
-    new isValidTerm(null, constants.OLS_SEARCH_URL),
-    new isValidTaxonomy(null),
-    new GraphRestriction(null, constants.OLS_SEARCH_URL),
-    new IsValidIdentifier(),
-    new RelationshipRestriction(null, constants.OLS_BASE_URL)
+	new isChildTermOf(null, constants.OLS_SEARCH_URL),
+	new isValidTerm(null, constants.OLS_SEARCH_URL),
+	new isValidTaxonomy(null),
+	new GraphRestriction(null, constants.OLS_SEARCH_URL)
 ];
 
 class BioValidator {
@@ -203,14 +201,18 @@ class BioValidator {
     _getAjvInstance(localSchemaPath) {
         const ajvInstance = new Ajv({
             allErrors: true,
-            strict: false, // Setting strict: false might hide some issues but is often needed for complex schemas. If needed, set it to 'log' or true for debugging.
+            strict: false,
             loadSchema: this._resolveReference(),
-            $data: true,   // for older draft usage
+            $data: true,
         });
 
         addFormats(ajvInstance);
         require("ajv-errors")(ajvInstance);
 
+        // Register new-style async keywords first
+        registerKeywords(ajvInstance);
+
+        // Then add legacy class-based keywords
         this._addCustomKeywordValidators(ajvInstance);
         this._preCompileLocalSchemas(ajvInstance, localSchemaPath);
 

@@ -1,4 +1,4 @@
-const ajv = require("ajv").default;
+const { ValidationError } = require("ajv");
 const axios = require('axios');
 const CustomAjvError = require("../model/custom-ajv-error");
 const {logger} = require("../utils/winston");
@@ -39,7 +39,7 @@ class IsValidIdentifier {
                     identifier = prefix + ":" + identifier;
                 } else if (prefixes && !prefixes.has(identifierPrefix)) {
                     errors.push(generateErrorObject(`"${identifierPrefix}" is not a valid namespace for the identifier. Allowed namespaces are [${new Array(...prefixes).join(', ')}]`));
-                    reject(new ajv.ValidationError(errors));
+                    reject(new Ajv.ValidationError(errors));
                     return;
                 }
 
@@ -71,11 +71,38 @@ class IsValidIdentifier {
                     }
                 }).finally(function () {
                     if (errors.length > 0) {
-                        reject(new ajv.ValidationError(errors));
+                        reject(new Ajv.ValidationError(errors));
                     } else {
                         resolve(true);
                     }
                 });
+            });
+        };
+    }
+
+    generateKeywordFunction() {
+        const self = this;
+        const generateErrorObject = (message) => {
+            return new CustomAjvError("isValidIdentifier", message, {});
+        };
+
+        return (schema, data) => {
+            return new Promise((resolve, reject) => {
+                self.isValidIdentifier(data, schema)
+                    .then(() => {
+                        resolve(true);
+                    })
+                    .catch(err => {
+                        let errors = [];
+                        if (err.message && err.message.includes('Failed to resolve')) {
+                            errors.push(generateErrorObject('Failed to resolve term from identifiers.org'));
+                        } else if (err.message && err.message.includes('not a valid namespace')) {
+                            errors.push(generateErrorObject('is not a valid namespace for the identifier'));
+                        } else {
+                            errors.push(generateErrorObject(err.message));
+                        }
+                        reject(new ValidationError(errors));
+                    });
             });
         };
     }

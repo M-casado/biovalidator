@@ -1,34 +1,22 @@
 const CurieExpansion = require("../utils/curie_expansion");
-const ajv = require("ajv").default;
+const Ajv = require("ajv");
 const axios = require('axios');
 const CustomAjvError = require("../model/custom-ajv-error");
 const {logger} = require("../utils/winston");
 const NodeCache = require("node-cache");
-const RelationshipRestriction = require("./relationshipRestriction");
+const relationshipRestriction = require("./relationshipRestriction");
 
 class GraphRestriction {
     constructor(keywordName, olsSearchUrl) {
         this.keywordName = keywordName ? keywordName : "graphRestriction";
         this.olsSearchUrl = olsSearchUrl;
-        this.relationshipRestriction = new RelationshipRestriction("_internal_relationship", olsSearchUrl?.replace('/api/search?q=', '/'));
+        // Keep a reference to the keyword object; no constructor call
+        this.relationshipRestriction = relationshipRestriction;
     }
 
-    /**
-     *
-     * Given an AJV validator, returns the validator with the graph-restriction keyword applied
-     *
-     * @param ajv
-     */
     configure(ajv) {
-        const keywordDefinition = {
-            keyword: this.keywordName,
-            async: GraphRestriction._isAsync(),
-            type: "string",
-            validate: this.generateKeywordFunction(),
-            errors: true
-        };
-
-        return ajv.addKeyword(keywordDefinition);
+        // Don't register the keyword here anymore since it's handled in index.js
+        return ajv;
     }
 
     keywordFunction() {
@@ -52,7 +40,7 @@ class GraphRestriction {
             try {
                 // Validate required fields for graphRestriction
                 if (!schema.classes || !schema.ontologies) {
-                    throw new ajv.ValidationError([
+                    throw new Ajv.ValidationError([
                         generateErrorObject("Missing required variable in schema graphRestriction, required properties are: classes and ontologies.")
                     ]);
                 }
@@ -63,43 +51,50 @@ class GraphRestriction {
                     targets: schema.classes,
                     relationType: ["rdfs:subClassOf*"],
                     includeSelf: schema.includeSelf || false,
-                    allowObsolete: false, // graphRestriction traditionally rejects obsolete terms
-                    allowImported: true, // graphRestriction traditionally allows imported terms
-                    directChild: false,
-                    leafNode: false,
+                    allowObsolete: false,
+                    allowImported: true,
                     idFormat: "ANY"
                 };
 
                 logger.debug(`GraphRestriction delegating to RelationshipRestriction for term: ${data}`);
 
-                // Use the relationshipRestriction validation function
-                const relationshipValidateFunction = this.relationshipRestriction.generateKeywordFunction();
-                
+                // Compile RR and validate data
+                const rrValidate = this.relationshipRestriction.compile(relationshipSchema);
                 try {
-                    const result = await relationshipValidateFunction(relationshipSchema, data);
-                    return result;
+                    const ok = await rrValidate(data);
+                    if (ok) return true;
+                    
+                    // Re-map RR errors to legacy graphRestriction message(s)
+                    const rrErrors = rrValidate.errors || [];
+                    const graphRestrictionErrors = rrErrors.map(err => {
+                        let message = err.message || String(err);
+                        if (message.includes("does not satisfy relationship")) {
+                            message = `Provided term is not child of [${schema.classes.join(', ')}]`;
+                        }
+                        return new CustomAjvError("graphRestriction", message, {});
+                    });
+                    throw new Ajv.ValidationError(graphRestrictionErrors);
                 } catch (error) {
                     // Convert relationshipRestriction errors to graphRestriction format
-                    if (error instanceof ajv.ValidationError) {
+                    if (error instanceof Ajv.ValidationError) {
                         const graphRestrictionErrors = error.errors.map(err => {
-                            // Convert the error message to match graphRestriction expectations
                             let message = err.message || err.toString();
                             if (message.includes("does not satisfy relationship")) {
                                 message = `Provided term is not child of [${schema.classes.join(', ')}]`;
                             }
                             return new CustomAjvError("graphRestriction", message, {});
                         });
-                        throw new ajv.ValidationError(graphRestrictionErrors);
+                        throw new Ajv.ValidationError(graphRestrictionErrors);
                     }
                     throw error;
                 }
 
             } catch (error) {
-                if (error instanceof ajv.ValidationError) {
+                if (error instanceof Ajv.ValidationError) {
                     throw error;
                 }
                 logger.error(`GraphRestriction validation error: ${error.message}`);
-                throw new ajv.ValidationError([generateErrorObject("Something went wrong while validating term, try again.")]);
+                throw new Ajv.ValidationError([generateErrorObject("Something went wrong while validating term, try again.")]);
             }
         };
     }

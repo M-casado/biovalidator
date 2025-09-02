@@ -1,6 +1,6 @@
 const fs = require("fs");
 const BioValidator = require('../src/core/biovalidator-core');
-const RelationshipRestriction = require('../src/keywords/relationshipRestriction');
+const { RelationshipRestriction } = require('../src/keywords/relationshipRestriction');
 const AxiosMockAdapter = require("axios-mock-adapter");
 const axios = require('axios');
 
