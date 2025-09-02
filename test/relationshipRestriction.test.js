@@ -42,34 +42,72 @@ const mockParentsData = {
     }
 };
 
+let testCounter = 0;
+
 beforeEach(() => {
+    testCounter++;
     mock.reset();
     
     // Mock term lookup - default non-obsolete
     mock.onGet(/.*\/api\/terms.*/).reply(200, mockTermData);
     
-    // Mock ancestors lookup
+    // Mock ancestors lookup (both ols and ols4 patterns, with various encodings)
     mock.onGet(/.*\/hierarchicalAncestors.*/).reply(200, mockAncestorsData);
+    mock.onGet(/.*\/api\/ontologies\/.*\/terms\/.*\/hierarchicalAncestors.*/).reply(200, mockAncestorsData);
     
-    // Mock parents lookup  
+    // Mock parents lookup (both ols and ols4 patterns, with various encodings)
     mock.onGet(/.*\/hierarchicalParents.*/).reply(200, mockParentsData);
+    mock.onGet(/.*\/api\/ontologies\/.*\/terms\/.*\/hierarchicalParents.*/).reply(200, mockParentsData);
+    mock.onGet(/.*www\.ebi\.ac\.uk.*\/hierarchicalParents.*/).reply(200, mockParentsData);
+    mock.onGet(/.*ols4.*hierarchicalParents.*/).reply(200, mockParentsData);
     
-    // Mock children lookup (empty for leaf node)
+    // Mock children lookup (empty for leaf node) (both ols and ols4 patterns, with various encodings)
     mock.onGet(/.*\/hierarchicalChildren.*/).reply(200, { _embedded: { terms: [] } });
+    mock.onGet(/.*\/api\/ontologies\/.*\/terms\/.*\/hierarchicalChildren.*/).reply(200, { _embedded: { terms: [] } });
     
-    // Catch all other OLS requests to prevent real network calls
-    mock.onGet(/.*ols.*/).reply(404, { message: "Not found" });
+    // Catch all other ebi.ac.uk requests
+    mock.onGet(/.*www\.ebi\.ac\.uk.*/).reply(404, { message: "Not found" });
+    mock.onGet(/.*ebi\.ac\.uk.*/).reply(404, { message: "Not found" });
+    
+    // Catch any unmocked requests
+    mock.onAny().reply(config => {
+        const url = config.url || config.baseURL;
+        console.log(`Mock checking: ${config.method?.toUpperCase()} ${url}`);
+        
+        // Handle hierarchical requests specifically
+        if (url?.includes('hierarchicalParents')) {
+            console.log('Returning mocked parents data');
+            return [200, mockParentsData];
+        }
+        if (url?.includes('hierarchicalAncestors')) {
+            console.log('Returning mocked ancestors data');
+            return [200, mockAncestorsData];
+        }
+        if (url?.includes('hierarchicalChildren')) {
+            console.log('Returning mocked children data');
+            return [200, { _embedded: { terms: [] } }];
+        }
+        
+        // Skip logging for expected 404s
+        if (url?.includes('ebi.ac.uk')) {
+            return [404, { error: "Not found" }];
+        }
+        console.warn(`Unmocked request: ${config.method?.toUpperCase()} ${url}`);
+        return [404, { error: "Not found" }];
+    });
 });
 
 afterEach(() => {
     mock.restore();
+    // Clear any validation caches
+    jest.clearAllMocks();
 });
 
 describe("RelationshipRestriction Keyword", () => {
     
     test("should validate basic subclass relationship", async () => {
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-basic",
             "$async": true,
             "type": "object",
             "properties": {
@@ -98,7 +136,7 @@ describe("RelationshipRestriction Keyword", () => {
 
     test("should handle includeSelf option", async () => {
         const schema = {
-            "$id": "test-schema", 
+            "$id": "test-schema-include-self",
             "$async": true,
             "type": "object",
             "properties": {
@@ -127,7 +165,7 @@ describe("RelationshipRestriction Keyword", () => {
 
     test("should enforce idFormat constraints", async () => {
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-id-format",
             "$async": true,
             "type": "object", 
             "properties": {
@@ -158,7 +196,7 @@ describe("RelationshipRestriction Keyword", () => {
 
     test("should validate direct child relationships", async () => {
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-" + testCounter,
             "$async": true,
             "type": "object",
             "properties": {
@@ -187,7 +225,7 @@ describe("RelationshipRestriction Keyword", () => {
 
     test("should check leaf node constraint", async () => {
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-" + testCounter,
             "$async": true,
             "type": "object",
             "properties": {
@@ -216,7 +254,7 @@ describe("RelationshipRestriction Keyword", () => {
 
     test("should reject invalid schema configurations", async () => {
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-" + testCounter,
             "$async": true,
             "type": "object",
             "properties": {
@@ -266,7 +304,7 @@ describe("RelationshipRestriction Keyword", () => {
         mock.onGet(/.*\/api\/terms.*/).reply(200, obsoleteTermData);
 
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-" + testCounter,
             "$async": true,
             "type": "object",
             "properties": {
@@ -296,7 +334,7 @@ describe("RelationshipRestriction Keyword", () => {
 
     test("should handle multiple ontologies", async () => {
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-" + testCounter,
             "$async": true,
             "type": "object",
             "properties": {
@@ -324,7 +362,7 @@ describe("RelationshipRestriction Keyword", () => {
 
     test("should handle multiple targets", async () => {
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-" + testCounter,
             "$async": true,
             "type": "object",
             "properties": {
@@ -370,7 +408,7 @@ describe("RelationshipRestriction Keyword", () => {
         mock.onGet(/.*ols.*/).reply(404, { message: "Not found" });
 
         const schema = {
-            "$id": "test-schema",
+            "$id": "test-schema-" + testCounter,
             "$async": true,
             "type": "object",
             "properties": {
