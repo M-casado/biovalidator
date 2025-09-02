@@ -75,9 +75,16 @@ class IsChildTermOf {
                         const isChildTermOfErrors = error.errors.map(err => {
                             // Convert the error message to match isChildTermOf expectations
                             let message = err.message || err.toString();
-                            if (message.includes("does not satisfy relationship")) {
+                            
+                            // Handle various error types that should be converted to "not child of"
+                            if (message.includes("does not satisfy relationship") ||
+                                message.includes("OLS API error") ||
+                                message.includes("found in ontology") ||
+                                message.includes("not found") ||
+                                message.includes("Failed to parse identifier")) {
                                 message = `Provided term is not child of [${schema.parentTerm}]`;
                             }
+                            
                             return new CustomAjvError("isChildTermOf", message, {keyword: "isChildTermOf"});
                         });
                         throw new ajv.ValidationError(isChildTermOfErrors);
