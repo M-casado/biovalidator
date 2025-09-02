@@ -3,11 +3,13 @@ const axios = require('axios');
 const {logger} = require("../utils/winston");
 const CustomAjvError = require("../model/custom-ajv-error");
 const {default: ajv} = require("ajv");
+const RelationshipRestriction = require("./relationshipRestriction");
 
 class IsChildTermOf {
     constructor(keywordName, olsSearchUrl) {
         this.keywordName = keywordName ? keywordName : "isChildTermOf";
         this.olsSearchUrl = olsSearchUrl;
+        this.relationshipRestriction = new RelationshipRestriction("_internal_relationship", olsSearchUrl?.replace('/api/search?q=', '/'));
     }
 
     configure(ajv) {
@@ -31,63 +33,71 @@ class IsChildTermOf {
     }
 
     generateKeywordFunction() {
-        return (schema, data) => {
-            return new Promise((resolve, reject) => {
-                const parentTerm = schema.parentTerm;
-                const ontologyId = schema.ontologyId;
-                let errors = [];
-
-                if (parentTerm && ontologyId) {
-                    const termUri = encodeURIComponent(data);
-                    const url = this.olsSearchUrl + termUri
-                        + "&exact=true&groupField=true&allChildrenOf=" + encodeURIComponent(parentTerm)
-                        + "&ontology=" + ontologyId + "&queryFields=iri";
-
-                    logger.log("debug", `Evaluating isChildTermOf, query url: [${url}]`);
-                    axios({method: "GET", url: url, responseType: 'json'})
-                        .then((response) => {
-                            if (response.status === 200 && response.data.response.numFound >= 1) {
-                                logger.debug(`Returning resolved relationship from OLS: [${parentTerm}] -> [${ontologyId}]`);
-                            } else if (response.status === 200 && response.data.response.numFound === 0) {
-                                logger.warn(`Failed to resolve relationship from OLS. [${parentTerm}] is not a child of [${parentTerm}]`);
-                                errors.push(
-                                    new CustomAjvError(
-                                        "isChildTermOf", `Provided term is not child of [${parentTerm}]`,
-                                        {keyword: "isChildTermOf"})
-                                );
-                            } else {
-                                logger.error(`Failed to resolve relationship from OLS. Unknown error resolving [${parentTerm}] -> [${parentTerm}]`);
-                                errors.push(new CustomAjvError(
-                                    "isChildTermOf", "Something went wrong while validating term, try again.",
-                                    {keyword: "isChildTermOf"})
-                                );
-                            }
-                        })
-                        .catch((error) => {
-                            logger.error(`Failed to resolve relationship from OLS. Unknown error resolving [${parentTerm}] -> [${parentTerm}]. [${error.response.data.errorMessage}]`);
-                            errors.push(new CustomAjvError(
-                                "isChildTermOf", "Something went wrong while validating term, try again." + error.response.data.errorMessage,
-                                {keyword: "isChildTermOf"})
-                            );
-                        })
-                        .finally(() => {
-                            if (errors.length > 0) {
-                                reject(new ajv.ValidationError(errors));
-                            } else {
-                                resolve(true);
-                            }
-                        });
-                } else {
-                    logger.error("Failed to resolve relationship from OLS. Missing required variable in schema isChildTermOf, required properties are: parentTerm and ontologyId");
-                    errors.push(new CustomAjvError(
+        return async (schema, data) => {
+            try {
+                // Validate required fields for isChildTermOf
+                if (!schema.parentTerm || !schema.ontologyId) {
+                    const error = new CustomAjvError(
                         "isChildTermOf",
                         "Missing required variable in schema isChildTermOf, required properties are: parentTerm and ontologyId.",
-                        {keyword: "isChildTermOf"})
+                        {keyword: "isChildTermOf"}
                     );
-                    reject(new Ajv.ValidationError(errors));
+                    throw new Ajv.ValidationError([error]);
                 }
-            });
-        }
+
+                // Add deprecation warning
+                logger.warn("isChildTermOf keyword is deprecated. Please use relationshipRestriction instead for new schemas.");
+
+                // Convert isChildTermOf schema to relationshipRestriction format
+                const relationshipSchema = {
+                    ontologies: [schema.ontologyId],
+                    targets: [schema.parentTerm],
+                    relationType: ["rdfs:subClassOf*"],
+                    includeSelf: false, // isChildTermOf traditionally doesn't include self
+                    allowObsolete: false,
+                    allowImported: true,
+                    directChild: false,
+                    leafNode: false,
+                    idFormat: "ANY"
+                };
+
+                logger.debug(`IsChildTermOf delegating to RelationshipRestriction for term: ${data}`);
+
+                // Use the relationshipRestriction validation function
+                const relationshipValidateFunction = this.relationshipRestriction.generateKeywordFunction();
+                
+                try {
+                    const result = await relationshipValidateFunction(relationshipSchema, data);
+                    return result;
+                } catch (error) {
+                    // Convert relationshipRestriction errors to isChildTermOf format
+                    if (error instanceof ajv.ValidationError) {
+                        const isChildTermOfErrors = error.errors.map(err => {
+                            // Convert the error message to match isChildTermOf expectations
+                            let message = err.message || err.toString();
+                            if (message.includes("does not satisfy relationship")) {
+                                message = `Provided term is not child of [${schema.parentTerm}]`;
+                            }
+                            return new CustomAjvError("isChildTermOf", message, {keyword: "isChildTermOf"});
+                        });
+                        throw new ajv.ValidationError(isChildTermOfErrors);
+                    }
+                    throw error;
+                }
+
+            } catch (error) {
+                if (error instanceof ajv.ValidationError) {
+                    throw error;
+                }
+                logger.error(`IsChildTermOf validation error: ${error.message}`);
+                const customError = new CustomAjvError(
+                    "isChildTermOf", 
+                    "Something went wrong while validating term, try again." + error.message,
+                    {keyword: "isChildTermOf"}
+                );
+                throw new Ajv.ValidationError([customError]);
+            }
+        };
     }
 }
 

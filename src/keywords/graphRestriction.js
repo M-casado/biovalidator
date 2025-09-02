@@ -4,11 +4,13 @@ const axios = require('axios');
 const CustomAjvError = require("../model/custom-ajv-error");
 const {logger} = require("../utils/winston");
 const NodeCache = require("node-cache");
+const RelationshipRestriction = require("./relationshipRestriction");
 
 class GraphRestriction {
     constructor(keywordName, olsSearchUrl) {
         this.keywordName = keywordName ? keywordName : "graphRestriction";
         this.olsSearchUrl = olsSearchUrl;
+        this.relationshipRestriction = new RelationshipRestriction("_internal_relationship", olsSearchUrl?.replace('/api/search?q=', '/'));
     }
 
     /**
@@ -42,95 +44,64 @@ class GraphRestriction {
     }
 
     generateKeywordFunction() {
-        const cachedOlsResponses = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
-        const curieExpansion = new CurieExpansion(this.olsSearchUrl);
-
-        const callCurieExpansion = (terms) => {
-            let expanded = terms.map((t) => {
-                if (CurieExpansion.isCurie(t)) {
-                    return curieExpansion.expandCurie(t);
-                } else {
-                    return t
-                }
-            });
-
-            return Promise.all(expanded);
-        };
-
         const generateErrorObject = (message) => {
             return new CustomAjvError("graphRestriction", message, {});
         };
 
-        return (schema, data) => {
-            return new Promise((resolve, reject) => {
-                let parentTerms = schema.classes;
-                const ontologyIds = schema.ontologies;
-                let queryFields = schema.queryFields ? schema.queryFields.join(",") : "obo_id";
-                let errors = [];
-
-                if (parentTerms && ontologyIds) {
-                    if (schema.includeSelf === true && parentTerms.includes(data)) {
-                        resolve(data);
-                    } else {
-                        callCurieExpansion(parentTerms).then((iris) => {
-                            const parentTerm = iris.join(",");
-                            const ontologyId = ontologyIds.join(",").replace(/obo:/g, "");
-
-                            const termUri = encodeURIComponent(data);
-                            const url = this.olsSearchUrl + termUri
-                                + "&exact=true&groupField=true&allChildrenOf=" + encodeURIComponent(parentTerm)
-                                // + "&ontology=" + ontologyId + "&queryFields=obo_id,label";
-                                + "&ontology=" + ontologyId + "&queryFields=" + queryFields;
-
-                            let olsResponsePromise;
-                            if (cachedOlsResponses.has(url)) {
-                                olsResponsePromise = Promise.resolve(cachedOlsResponses.get(url));
-                                logger.debug("Returning cached response for OLS request: " + url)
-                            } else {
-                                olsResponsePromise = axios({
-                                    method: "GET",
-                                    url: url,
-                                    responseType: 'json'
-                                });
-                            }
-
-                            olsResponsePromise.then((response) => {
-                                cachedOlsResponses.set(url, response);
-                                if (response.status === 200 && response.data.response.numFound >= 1) {
-                                    logger.debug(`Returning resolved term from OLS: [${parentTerm}]`);
-                                } else if (response.status === 200 && response.data.response.numFound === 0) {
-                                    logger.warn(`Failed to resolve term from OLS. Invalid relationship: [${ontologyId}]`);
-                                    errors.push(generateErrorObject(`Provided term is not child of [${parentTerm}]`));
-                                } else {
-                                    logger.error(`Failed to resolve term from OLS. Unknown error: [${ontologyId}]`);
-                                    errors.push(generateErrorObject("Something went wrong while validating term, try again."));
-                                }
-                            }).catch(err => {
-                                logger.error("Failed to resolve term from OLS. Unknown error: " + err);
-                                errors.push(generateErrorObject(err));
-                            }).finally(function () {
-                                if (errors.length > 0) {
-                                    reject(new ajv.ValidationError(errors));
-                                } else {
-                                    resolve(true);
-                                }
-                            });
-                        }).catch(err => {
-                            logger.error("Failed to resolve term from OLS. Unknown error: " + err);
-                            errors.push(generateErrorObject(err));
-                        }).finally(function () {
-                            if (errors.length > 0) {
-                                reject(new ajv.ValidationError(errors));
-                            }
-                        });
-                    }
-                } else {
-                    errors.push(generateErrorObject("Missing required variable in schema graphRestriction, required properties are: parentTerm and ontologyId."));
-                    reject(ajv.ValidationError);
+        return async (schema, data) => {
+            try {
+                // Validate required fields for graphRestriction
+                if (!schema.classes || !schema.ontologies) {
+                    throw new ajv.ValidationError([
+                        generateErrorObject("Missing required variable in schema graphRestriction, required properties are: classes and ontologies.")
+                    ]);
                 }
-            });
-        };
 
+                // Convert graphRestriction schema to relationshipRestriction format
+                const relationshipSchema = {
+                    ontologies: schema.ontologies,
+                    targets: schema.classes,
+                    relationType: ["rdfs:subClassOf*"],
+                    includeSelf: schema.includeSelf || false,
+                    allowObsolete: false, // graphRestriction traditionally rejects obsolete terms
+                    allowImported: true, // graphRestriction traditionally allows imported terms
+                    directChild: false,
+                    leafNode: false,
+                    idFormat: "ANY"
+                };
+
+                logger.debug(`GraphRestriction delegating to RelationshipRestriction for term: ${data}`);
+
+                // Use the relationshipRestriction validation function
+                const relationshipValidateFunction = this.relationshipRestriction.generateKeywordFunction();
+                
+                try {
+                    const result = await relationshipValidateFunction(relationshipSchema, data);
+                    return result;
+                } catch (error) {
+                    // Convert relationshipRestriction errors to graphRestriction format
+                    if (error instanceof ajv.ValidationError) {
+                        const graphRestrictionErrors = error.errors.map(err => {
+                            // Convert the error message to match graphRestriction expectations
+                            let message = err.message || err.toString();
+                            if (message.includes("does not satisfy relationship")) {
+                                message = `Provided term is not child of [${schema.classes.join(', ')}]`;
+                            }
+                            return new CustomAjvError("graphRestriction", message, {});
+                        });
+                        throw new ajv.ValidationError(graphRestrictionErrors);
+                    }
+                    throw error;
+                }
+
+            } catch (error) {
+                if (error instanceof ajv.ValidationError) {
+                    throw error;
+                }
+                logger.error(`GraphRestriction validation error: ${error.message}`);
+                throw new ajv.ValidationError([generateErrorObject("Something went wrong while validating term, try again.")]);
+            }
+        };
     }
 }
 
