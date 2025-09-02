@@ -12,7 +12,6 @@ const NodeCache = require("node-cache");
 const constants = require("../utils/constants");
 
 const customKeywordValidators = [
-	new isChildTermOf(null, constants.OLS_SEARCH_URL),
 	new isValidTerm(null, constants.OLS_SEARCH_URL),
 	new isValidTaxonomy(null),
 	new GraphRestriction(null, constants.OLS_SEARCH_URL)

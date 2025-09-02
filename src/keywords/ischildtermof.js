@@ -12,10 +12,10 @@ class IsChildTermOf {
 	getKeywordDefinition() {
 		function mapLegacySchema(schema) {
 			return {
-				ontologies: schema.ontologies || (schema.ontology ? [schema.ontology] : []),
+				ontologies: schema.ontologies || (schema.ontology ? [schema.ontology] : (schema.ontologyId ? [schema.ontologyId] : [])),
 				targets: schema.targets || (schema.parentTerm ? [schema.parentTerm] : []),
 				relationType: ['rdfs:subClassOf*'],
-				idFormat: schema.idFormat || 'CURIE',
+				idFormat: schema.idFormat || 'ANY', // Allow both IRIs and CURIEs 
 				allowObsolete: typeof schema.allowObsolete === 'boolean' ? schema.allowObsolete : true,
 				allowImported: typeof schema.allowImported === 'boolean' ? schema.allowImported : true,
 				leafNode: !!schema.leafNode,

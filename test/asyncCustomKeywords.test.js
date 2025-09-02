@@ -29,7 +29,12 @@ describe("asyncCustomKeywords test suite", () => {
     // Mock OLS v1 API calls (fetchEntityByCurie)
     mockAxios.onGet(/.*\/ols\/api\/ontologies\/.*\/terms.*obo_id=.*/).reply((config) => {
       console.log(`Mock OLS v1 request: ${config.url}`);
-      const oboId = config.params?.obo_id || config.url.match(/obo_id=([^&]+)/)?.[1];
+      let oboId = config.params?.obo_id || config.url.match(/obo_id=([^&]+)/)?.[1];
+      
+      // Decode URL-encoded parameters
+      if (oboId) {
+        oboId = decodeURIComponent(oboId);
+      }
       
       if (oboId === 'MONDO:0018177') {
         return [200, {

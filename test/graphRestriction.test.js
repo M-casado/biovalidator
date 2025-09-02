@@ -10,8 +10,15 @@ beforeEach(() => {
     mockAxios = new MockAdapter(axios);
     
     // Mock for MONDO:0018177 (glioblastoma) - should pass
-    mockAxios.onGet(/.*\/api\/terms.*/).reply((config) => {
-      if (config.params?.obo_id === 'MONDO:0018177') {
+    mockAxios.onGet(/.*\/ols\/api\/ontologies\/.*\/terms.*obo_id=.*/).reply((config) => {
+      let oboId = config.params?.obo_id || config.url.match(/obo_id=([^&]+)/)?.[1];
+      
+      // Decode URL-encoded parameters
+      if (oboId) {
+        oboId = decodeURIComponent(oboId);
+      }
+      
+      if (oboId === 'MONDO:0018177') {
         return [200, {
           _embedded: {
             terms: [{
@@ -23,7 +30,7 @@ beforeEach(() => {
           }
         }];
       }
-      if (config.params?.obo_id === 'MONDO:0000001') {
+      if (oboId === 'MONDO:0000001') {
         return [200, {
           _embedded: {
             terms: [{
@@ -35,7 +42,7 @@ beforeEach(() => {
           }
         }];
       }
-      if (config.params?.obo_id === 'PATO:0000461') {
+      if (oboId === 'PATO:0000461') {
         return [200, {
           _embedded: {
             terms: [{
@@ -47,7 +54,7 @@ beforeEach(() => {
           }
         }];
       }
-      if (config.params?.obo_id === 'EFO:0008481') {
+      if (oboId === 'EFO:0008481') {
         return [200, {
           _embedded: {
             terms: [{
@@ -79,7 +86,7 @@ beforeEach(() => {
     });
 
     // Mock ancestors for EFO:0008481 - should NOT include MONDO:0000001 or PATO:0000461
-    mockAxios.onGet(/.*\/api\/ontologies\/efo\/terms\/.*EFO_0008481.*\/hierarchicalAncestors.*/).reply(200, {
+    mockAxios.onGet(/.*\/ols4\/api\/ontologies\/efo\/terms\/.*EFO_0008481.*\/hierarchicalAncestors.*/).reply(200, {
       _embedded: {
         terms: [
           {
@@ -87,6 +94,13 @@ beforeEach(() => {
             label: "experimental factor"
           }
         ]
+      }
+    });
+
+    // Mock ancestors for any mondo entity
+    mockAxios.onGet(/.*\/ols4\/api\/ontologies\/mondo\/terms\/.*\/hierarchicalAncestors.*/).reply(200, {
+      _embedded: {
+        terms: []
       }
     });
 

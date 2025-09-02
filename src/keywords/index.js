@@ -1,8 +1,13 @@
 const relationshipRestriction = require('./relationshipRestriction');
+const IsChildTermOf = require('./ischildtermof');
 
 function registerKeywords(ajv, options = {}) {
 	// Register relationshipRestriction as async keyword
 	ajv.addKeyword(relationshipRestriction);
+
+	// Register isChildTermOf keyword
+	const isChildTermOfInstance = new IsChildTermOf(ajv, options.olsBaseUrl);
+	ajv.addKeyword(isChildTermOfInstance.getKeywordDefinition());
 
 	// Register legacy aliases that delegate to relationshipRestriction
 	ajv.addKeyword({
@@ -42,12 +47,15 @@ function registerKeywords(ajv, options = {}) {
 
 			const validate = relationshipRestriction.compile(relationshipSchema, {}, {});
 			
+			const { ValidationError } = require('ajv');
+			
 			const wrapped = async function (data, dataCxt) {
-				try {
-					const ok = await validate(data, dataCxt);
-					if (!ok && validate.errors) {
-						// Convert relationshipRestriction errors to graphRestriction format
-						wrapped.errors = validate.errors.map(err => {
+				const ok = await validate(data, dataCxt);
+				if (!ok) {
+					// Convert relationshipRestriction errors to graphRestriction format
+					let convertedErrors;
+					if (validate.errors && validate.errors.length > 0) {
+						convertedErrors = validate.errors.map(err => {
 							let message = err.message || err.toString();
 							if (message.includes("does not satisfy relationship")) {
 								message = `Provided term is not child of [${schema.classes.join(', ')}]`;
@@ -58,39 +66,20 @@ function registerKeywords(ajv, options = {}) {
 								message
 							};
 						});
-						return false;
-					} else if (!ok) {
+					} else {
 						// Validation failed but no errors set - provide default error
-						wrapped.errors = [{
+						convertedErrors = [{
 							keyword: 'graphRestriction',
 							instancePath: '',
 							schemaPath: '',
 							params: {},
 							message: `Provided term is not child of [${schema.classes.join(', ')}]`
 						}];
-						return false;
-					} else {
-						wrapped.errors = null;
-						return ok;
 					}
-				} catch (error) {
-					// Handle ValidationError properly
-					if (error.errors && Array.isArray(error.errors)) {
-						wrapped.errors = error.errors.map(err => {
-							let message = err.message || err.toString();
-							if (message.includes("does not satisfy relationship")) {
-								message = `Provided term is not child of [${schema.classes.join(', ')}]`;
-							}
-							return {
-								...err,
-								keyword: 'graphRestriction',
-								message
-							};
-						});
-						return false;
-					}
-					throw error;
+					// For async keywords, throw ValidationError
+					throw new ValidationError(convertedErrors);
 				}
+				return ok;
 			};
 			return wrapped;
 		}
@@ -99,8 +88,8 @@ function registerKeywords(ajv, options = {}) {
 
 // Export both the function and the class constructors
 module.exports = registerKeywords;
-module.exports.isChildTermOf = require('./isChildTermOf');
-module.exports.isValidTerm = require('./isValidTerm');
-module.exports.isValidTaxonomy = require('./isValidTaxonomy');
+module.exports.isChildTermOf = require('./ischildtermof');
+module.exports.isValidTerm = require('./isvalidterm');
+module.exports.isValidTaxonomy = require('./isvalidtaxonomy');
 module.exports.GraphRestriction = require('./graphRestriction');
 module.exports.relationshipRestriction = relationshipRestriction;
