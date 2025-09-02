@@ -3,7 +3,7 @@ const addFormats = require("ajv-formats");
 const axios = require('axios');
 const AppError = require("../model/application-error");
 const {getFiles, readFile} = require("../utils/file_utils");
-const {isChildTermOf, isValidTerm, isValidTaxonomy} = require("../keywords");
+const {isChildTermOf, isValidTerm, isValidTaxonomy, RelationshipRestriction} = require("../keywords");
 const GraphRestriction = require("../keywords/graphRestriction");
 const IsValidIdentifier = require("../keywords/isvalididentifier");
 const ValidationError = require("../model/validation-error");
@@ -16,7 +16,8 @@ const customKeywordValidators = [
     new isValidTerm(null, constants.OLS_SEARCH_URL),
     new isValidTaxonomy(null),
     new GraphRestriction(null, constants.OLS_SEARCH_URL),
-    new IsValidIdentifier()
+    new IsValidIdentifier(),
+    new RelationshipRestriction(null, constants.OLS_BASE_URL)
 ];
 
 class BioValidator {

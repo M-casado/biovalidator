@@ -1,0 +1,7 @@
+{
+  "basicTerm": "EFO:0000408",
+  "strictTerm": "UBERON:0000955",
+  "multiTargetTerm": "EFO:0000408",
+  "directChildTerm": "CL:0000003",
+  "flexibleFormatTerm": "http://purl.obolibrary.org/obo/GO_0008152"
+}

@@ -1,0 +1,85 @@
+{
+  "$id": "http://subs/relationshipRestriction-schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Schema demonstrating the relationshipRestriction keyword",
+  "$async": true,
+  "additionalProperties": false,
+  "required": [
+    "basicTerm",
+    "strictTerm"
+  ],
+  "title": "relationshipRestriction_example",
+  "properties": {
+    "describedBy": {
+      "pattern": "^(http|https)://schema.(.*?)humancellatlas.org/module/ontology/(([0-9]{1,}.[0-9]{1,}.[0-9]{1,})|([a-zA-Z]*?))/relationship_restriction",
+      "type": "string"
+    },
+    "schema_version": {
+      "description": "Version number in major.minor.patch format.",
+      "type": "string",
+      "pattern": "^[0-9]{1,}.[0-9]{1,}.[0-9]{1,}$",
+      "example": "4.6.1"
+    },
+    "basicTerm": {
+      "description": "A basic subclass relationship validation",
+      "type": "string",
+      "relationshipRestriction": {
+        "ontologies": ["efo"],
+        "targets": ["http://purl.obolibrary.org/obo/EFO_0000001"],
+        "relationType": ["rdfs:subClassOf*"],
+        "includeSelf": false,
+        "allowObsolete": false
+      }
+    },
+    "strictTerm": {
+      "description": "A strict validation with format and leaf constraints",
+      "type": "string",
+      "relationshipRestriction": {
+        "ontologies": ["uberon"],
+        "targets": ["http://purl.obolibrary.org/obo/UBERON_0000468"],
+        "relationType": ["rdfs:subClassOf*"],
+        "idFormat": "CURIE",
+        "includeSelf": false,
+        "allowObsolete": false,
+        "directChild": false,
+        "leafNode": true
+      }
+    },
+    "multiTargetTerm": {
+      "description": "Term that can match multiple target classes",
+      "type": "string",
+      "relationshipRestriction": {
+        "ontologies": ["efo", "mondo"],
+        "targets": [
+          "http://purl.obolibrary.org/obo/EFO_0000408",
+          "http://purl.obolibrary.org/obo/MONDO_0000001"
+        ],
+        "relationType": ["rdfs:subClassOf*"],
+        "includeSelf": true
+      }
+    },
+    "directChildTerm": {
+      "description": "Term that must be a direct child of the target",
+      "type": "string",
+      "relationshipRestriction": {
+        "ontologies": ["cl"],
+        "targets": ["http://purl.obolibrary.org/obo/CL_0000000"],
+        "relationType": ["rdfs:subClassOf"],
+        "directChild": true
+      }
+    },
+    "flexibleFormatTerm": {
+      "description": "Term that accepts any identifier format",
+      "type": "string",
+      "relationshipRestriction": {
+        "ontologies": ["go"],
+        "targets": ["http://purl.obolibrary.org/obo/GO_0008150"],
+        "relationType": ["rdfs:subClassOf*"],
+        "idFormat": "ANY",
+        "allowImported": true,
+        "allowObsolete": true
+      }
+    }
+  },
+  "type": "object"
+}

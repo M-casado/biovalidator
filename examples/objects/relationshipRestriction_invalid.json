@@ -1,0 +1,7 @@
+{
+  "basicTerm": "INVALID:0000999",
+  "strictTerm": "http://purl.obolibrary.org/obo/UBERON_0000955",
+  "multiTargetTerm": "EFO:0000408",
+  "directChildTerm": "CL:0000003",
+  "flexibleFormatTerm": "GO:0008152"
+}
