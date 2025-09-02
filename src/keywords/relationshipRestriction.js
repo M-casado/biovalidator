@@ -67,92 +67,74 @@ class RelationshipRestriction {
                 
                 logger.debug(`RelationshipRestriction validation for term: ${data} with options: ${JSON.stringify(options)}`);
 
-                // Try each ontology until we find a successful match
-                let allErrors = [];
-                
-                for (const ontology of options.ontologies) {
-                    try {
-                        // Step 1: Parse and validate the input identifier format
-                        let parsedTerm;
-                        try {
-                            parsedTerm = await this.identifierParser.parseIdentifier(
-                                data, 
-                                [ontology], // Single ontology at a time
-                                {
-                                    idFormat: options.idFormat,
-                                    allowObsolete: options.allowObsolete,
-                                    cacheResults: true
-                                }
-                            );
-                        } catch (error) {
-                            logger.debug(`Failed to parse identifier ${data} in ontology ${ontology}: ${error.message}`);
-                            allErrors.push(error.message);
-                            continue; // Try next ontology
+                // Step 1: Parse the input identifier to find which ontology it belongs to
+                let parsedTerm;
+                try {
+                    parsedTerm = await this.identifierParser.parseIdentifier(
+                        data, 
+                        options.ontologies, // Try all allowed ontologies
+                        {
+                            idFormat: options.idFormat,
+                            allowObsolete: options.allowObsolete,
+                            cacheResults: true
                         }
+                    );
+                } catch (error) {
+                    logger.debug(`Failed to parse identifier ${data} in any allowed ontology: ${error.message}`);
+                    throw new ajv.ValidationError([generateErrorObject(error.message)]);
+                }
 
-                        // Step 2: Check metadata constraints
-                        if (!options.allowImported && parsedTerm.isImported) {
-                            logger.debug(`Term ${data} is imported in ontology ${ontology}, skipping`);
-                            continue;
+                // Step 2: Normalize target identifiers to IRIs for comparison
+                const normalizedTargets = await this._normalizeTargets(options.targets, options.ontologies);
+
+                // Step 3: Check metadata constraints
+                if (!options.allowImported && parsedTerm.isImported) {
+                    const message = `Term ${data} is imported in ontology ${parsedTerm.ontology} (imported terms not allowed)`;
+                    throw new ajv.ValidationError([generateErrorObject(message)]);
+                }
+
+                // Step 4: Handle includeSelf shortcut
+                if (options.includeSelf && normalizedTargets.some(target => target === parsedTerm.iri)) {
+                    logger.debug(`Term ${data} matches target directly with includeSelf enabled`);
+                    
+                    // Still need to check leafNode constraint if specified
+                    if (options.leafNode) {
+                        const isLeaf = await this._checkIsLeafNode(parsedTerm.iri, parsedTerm.ontology);
+                        if (!isLeaf) {
+                            const message = `Term ${data} is not a leaf node in ontology ${parsedTerm.ontology}`;
+                            throw new ajv.ValidationError([generateErrorObject(message)]);
                         }
+                    }
+                    
+                    return true;
+                }
 
-                        // Step 3: Handle includeSelf shortcut
-                        if (options.includeSelf && options.targets.includes(parsedTerm.iri)) {
-                            logger.debug(`Term ${data} matches target directly with includeSelf enabled`);
-                            
-                            // Still need to check leafNode constraint if specified
-                            if (options.leafNode) {
-                                const isLeaf = await this._checkIsLeafNode(parsedTerm.iri, parsedTerm.ontology);
-                                if (!isLeaf) {
-                                    logger.debug(`Term ${data} is not a leaf node in ontology ${parsedTerm.ontology}`);
-                                    continue;
-                                }
-                            }
-                            
-                            return true;
-                        }
+                // Step 5: Traverse relationship path
+                const pathResult = await this._traverseRelationshipPath(
+                    parsedTerm.iri,
+                    parsedTerm.ontology,
+                    options.relationType,
+                    normalizedTargets,
+                    options.directChild
+                );
 
-                        // Step 4: Traverse relationship path
-                        const pathResult = await this._traverseRelationshipPath(
-                            parsedTerm.iri,
-                            parsedTerm.ontology,
-                            options.relationType,
-                            options.targets,
-                            options.directChild
-                        );
+                if (!pathResult.found) {
+                    logger.debug(`No relationship path found in ontology ${parsedTerm.ontology}`);
+                    const message = `Term ${data} does not satisfy relationship ${options.relationType.join(' -> ')} to targets [${options.targets.join(', ')}] in ontology ${parsedTerm.ontology}`;
+                    throw new ajv.ValidationError([generateErrorObject(message)]);
+                }
 
-                        if (!pathResult.found) {
-                            logger.debug(`No relationship path found in ontology ${parsedTerm.ontology}`);
-                            continue;
-                        }
-
-                        // Step 5: Check leafNode constraint if specified
-                        if (options.leafNode) {
-                            const isLeaf = await this._checkIsLeafNode(parsedTerm.iri, parsedTerm.ontology);
-                            if (!isLeaf) {
-                                logger.debug(`Term ${data} is not a leaf node in ontology ${parsedTerm.ontology}`);
-                                continue;
-                            }
-                        }
-
-                        logger.debug(`RelationshipRestriction validation successful for term: ${data} in ontology ${parsedTerm.ontology}`);
-                        return true;
-
-                    } catch (error) {
-                        logger.debug(`Error processing ontology ${ontology}: ${error.message}`);
-                        continue;
+                // Step 6: Check leafNode constraint if specified
+                if (options.leafNode) {
+                    const isLeaf = await this._checkIsLeafNode(parsedTerm.iri, parsedTerm.ontology);
+                    if (!isLeaf) {
+                        const message = `Term ${data} is not a leaf node in ontology ${parsedTerm.ontology}`;
+                        throw new ajv.ValidationError([generateErrorObject(message)]);
                     }
                 }
 
-                // If we get here, no ontology satisfied the constraints
-                // Check if all errors are format-related (same error for all ontologies)
-                if (allErrors.length > 0 && allErrors.every(err => err === allErrors[0])) {
-                    // All ontologies failed with the same error (likely format issue)
-                    throw new ajv.ValidationError([generateErrorObject(allErrors[0])]);
-                }
-                
-                const message = `Term ${data} does not satisfy relationship ${options.relationType.join(' -> ')} to targets [${options.targets.join(', ')}] in any of the ontologies [${options.ontologies.join(', ')}]`;
-                throw new ajv.ValidationError([generateErrorObject(message)]);
+                logger.debug(`RelationshipRestriction validation successful for term: ${data} in ontology ${parsedTerm.ontology}`);
+                return true;
 
             } catch (error) {
                 if (error instanceof ajv.ValidationError) {
@@ -498,6 +480,46 @@ class RelationshipRestriction {
             // If we can't determine, assume it's not a leaf to be safe
             return false;
         }
+    }
+
+    /**
+     * Normalize target identifiers to IRIs for comparison
+     * @private
+     * @param {Array} targets - Array of target identifiers (CURIEs, IRIs, or short forms)
+     * @param {Array} ontologies - Array of ontology IDs for context
+     * @returns {Promise<Array>} Array of normalized IRI strings
+     */
+    async _normalizeTargets(targets, ontologies) {
+        const normalizedTargets = [];
+        
+        for (const target of targets) {
+            try {
+                // If it's already an IRI, use it as-is
+                if (this.identifierParser.isIri(target)) {
+                    normalizedTargets.push(target);
+                    continue;
+                }
+
+                // Try to resolve CURIE or short form to IRI
+                const parsedTarget = await this.identifierParser.parseIdentifier(
+                    target,
+                    ontologies,
+                    {
+                        idFormat: 'ANY',
+                        allowObsolete: true, // Allow obsolete targets for flexibility
+                        cacheResults: true
+                    }
+                );
+                normalizedTargets.push(parsedTarget.iri);
+            } catch (error) {
+                // If we can't resolve the target, keep it as-is for comparison
+                // This allows for target IRIs that might not be in the specified ontologies
+                logger.debug(`Could not resolve target ${target}, using as-is: ${error.message}`);
+                normalizedTargets.push(target);
+            }
+        }
+
+        return normalizedTargets;
     }
 }
 
