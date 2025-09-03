@@ -21,21 +21,17 @@ describe('relationshipRestriction - Options Parsing', () => {
         // Clear any existing nocks and add generic mock for all OLS requests
         if (!runLive) {
             nock.cleanAll();
-            // Add a generic mock for any OLS request to prevent network calls
+            // Add a generic mock for any OLS4Client request to prevent network calls
             nock('https://www.ebi.ac.uk')
                 .persist()
-                .get('/ols4/api/terms')
-                .query(true)
+                .get(/\/ols4\/api\/ontologies\/\w+\/terms\/.*/)
                 .reply(200, {
-                    _embedded: {
-                        terms: [{
-                            iri: 'http://purl.obolibrary.org/obo/UBERON_0000062',
-                            label: 'organ',
-                            ontology_name: 'uberon',
-                            short_form: 'UBERON_0000062',
-                            is_obsolete: false
-                        }]
-                    }
+                    iri: 'http://purl.obolibrary.org/obo/UBERON_0000062',
+                    label: 'organ',
+                    ontologyId: 'uberon',
+                    has_children: false,
+                    is_obsolete: false,
+                    is_defining_ontology: true
                 });
         }
     });

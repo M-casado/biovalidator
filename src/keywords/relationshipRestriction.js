@@ -57,43 +57,42 @@ class RelationshipRestriction {
 
                 logger.debug(`Resolved input identifier: ${data} → ${parsedData.iri} (ontology: ${parsedData.ontology})`);
 
-                // Normalize targets: resolve CURIEs to IRIs but keep original string content for error messages
+                // Normalize targets: only resolve CURIEs to IRIs, leave IRIs as-is
                 const normalizedTargets = [];
                 for (const target of options.targets) {
-                    try {
-                        // Try to parse target if it looks like a CURIE
-                        if (this.identifierParser.isCurie(target)) {
-                            logger.debug(`Parsing target CURIE: ${target}`);
+                    if (this.identifierParser.isCurie(target)) {
+                        // Resolve CURIE to IRI
+                        try {
+                            logger.debug(`Resolving target CURIE: ${target}`);
                             const parsedTarget = await this.identifierParser.parseIdentifier(target, options.ontologies, {
-                                idFormat: IdFormat.ANY, // Targets can be either CURIE or IRI
+                                idFormat: IdFormat.CURIE, // Enforce CURIE format for targets being resolved
                                 allowObsolete: options.allowObsolete,
                                 cacheResults: true
                             });
-                            // Store both original and IRI for future reference
                             normalizedTargets.push({
                                 original: target,
                                 iri: parsedTarget.iri,
                                 ontology: parsedTarget.ontology
                             });
                             logger.debug(`Resolved target CURIE: ${target} → ${parsedTarget.iri}`);
-                        } else {
-                            // Assume it's already an IRI, store as-is
+                        } catch (error) {
+                            logger.warn(`Failed to resolve target CURIE ${target}: ${error.message}`);
+                            // Still include it for error reporting, but mark as failed
                             normalizedTargets.push({
                                 original: target,
-                                iri: target,
-                                ontology: null // Will be determined during relationship checking
+                                iri: target, // Keep original for error messages
+                                ontology: null,
+                                parseError: error.message
                             });
-                            logger.debug(`Target assumed to be IRI: ${target}`);
                         }
-                    } catch (error) {
-                        logger.warn(`Failed to parse target ${target}: ${error.message}`);
-                        // Still include it, but mark as unparseable
+                    } else {
+                        // Assume it's an IRI, store as-is without validation
                         normalizedTargets.push({
                             original: target,
                             iri: target,
-                            ontology: null,
-                            parseError: error.message
+                            ontology: null // Will be determined during relationship checking if needed
                         });
+                        logger.debug(`Target assumed to be IRI (not validated): ${target}`);
                     }
                 }
 

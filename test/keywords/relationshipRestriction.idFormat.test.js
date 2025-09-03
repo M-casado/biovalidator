@@ -37,33 +37,26 @@ describe('relationshipRestriction - idFormat Validation', () => {
     describe('valid idFormat cases', () => {
         test('should accept idFormat:"ANY" with CURIE input', async () => {
             if (!runLive) {
-                // Mock all possible OLS requests with specific responses for each term
+                // Mock OLS4Client requests - input term EFO:0000408 resolves to IRI
                 nock('https://www.ebi.ac.uk')
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000408')
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000408')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
-                                label: 'disease',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000408',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
+                        label: 'disease',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     })
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000001')
+                    // Mock target term EFO:0000001 
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000001')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
-                                label: 'experimental factor',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000001',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
+                        label: 'experimental factor',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     });
             }
 
@@ -85,33 +78,26 @@ describe('relationshipRestriction - idFormat Validation', () => {
 
         test('should accept idFormat:"ANY" with IRI input', async () => {
             if (!runLive) {
-                // Mock OLS requests with specific responses
+                // Mock OLS4Client requests - input term is already an IRI
                 nock('https://www.ebi.ac.uk')
-                    .get('/ols4/api/terms')
-                    .query(query => typeof query.iri === 'string' && query.iri.includes('EFO_0000408'))
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fwww.ebi.ac.uk%252Fefo%252FEFO_0000408')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
-                                label: 'disease',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000408',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
+                        label: 'disease',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     })
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000001')
+                    // Mock target term EFO:0000001 
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000001')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
-                                label: 'experimental factor',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000001',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
+                        label: 'experimental factor',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     });
             }
 
@@ -134,31 +120,23 @@ describe('relationshipRestriction - idFormat Validation', () => {
         test('should accept idFormat:"CURIE" with CURIE input', async () => {
             if (!runLive) {
                 nock('https://www.ebi.ac.uk')
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000408')
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000408')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
-                                label: 'disease',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000408',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
+                        label: 'disease',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     })
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000001')
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000001')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
-                                label: 'experimental factor',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000001',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
+                        label: 'experimental factor',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     });
             }
 
@@ -181,31 +159,23 @@ describe('relationshipRestriction - idFormat Validation', () => {
         test('should accept idFormat:"IRI" with IRI input', async () => {
             if (!runLive) {
                 nock('https://www.ebi.ac.uk')
-                    .get('/ols4/api/terms')
-                    .query(query => typeof query.iri === 'string' && query.iri.includes('EFO_0000408'))
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fwww.ebi.ac.uk%252Fefo%252FEFO_0000408')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
-                                label: 'disease',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000408',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
+                        label: 'disease',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     })
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000001')
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000001')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
-                                label: 'experimental factor',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000001',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
+                        label: 'experimental factor',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     });
             }
 
@@ -228,8 +198,7 @@ describe('relationshipRestriction - idFormat Validation', () => {
 
     describe('invalid idFormat cases (early failure, no network)', () => {
         test('should fail idFormat:"CURIE" with IRI input without hitting network', async () => {
-            // NO NOCK MOCKS - we expect this to fail before any network calls
-
+            // No nock mocks - should fail early before any HTTP requests
             const schema = {
                 $async: true,
                 type: 'string',
@@ -244,13 +213,12 @@ describe('relationshipRestriction - idFormat Validation', () => {
             const validate = ajv.compile(schema);
             
             await expect(validate('http://www.ebi.ac.uk/efo/EFO_0000408')).rejects.toMatchObject({
-                message: expect.stringContaining('Identifier must be in CURIE format')
+                message: expect.stringContaining('must be in CURIE format')
             });
         });
 
         test('should fail idFormat:"IRI" with CURIE input without hitting network', async () => {
-            // NO NOCK MOCKS - we expect this to fail before any network calls
-
+            // No nock mocks - should fail early before any HTTP requests
             const schema = {
                 $async: true,
                 type: 'string',
@@ -265,7 +233,7 @@ describe('relationshipRestriction - idFormat Validation', () => {
             const validate = ajv.compile(schema);
             
             await expect(validate('EFO:0000408')).rejects.toMatchObject({
-                message: expect.stringContaining('Identifier must be an IRI')
+                message: expect.stringContaining('must be an IRI')
             });
         });
     });
@@ -273,21 +241,15 @@ describe('relationshipRestriction - idFormat Validation', () => {
     describe('allowObsolete enforcement', () => {
         test('should reject obsolete terms when allowObsolete:false', async () => {
             if (!runLive) {
-                // Mock OLS response for obsolete term - return different responses for different IDs
                 nock('https://www.ebi.ac.uk')
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000408')
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000408')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
-                                label: 'obsolete disease',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000408',
-                                is_obsolete: true,
-                                term_replaced_by: 'EFO:0000999'
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
+                        label: 'disease',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: true,
+                        is_defining_ontology: true
                     });
             }
 
@@ -311,34 +273,24 @@ describe('relationshipRestriction - idFormat Validation', () => {
 
         test('should accept obsolete terms when allowObsolete:true', async () => {
             if (!runLive) {
-                // Mock OLS response for obsolete term and target
                 nock('https://www.ebi.ac.uk')
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000408')
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000408')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
-                                label: 'obsolete disease',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000408',
-                                is_obsolete: true,
-                                term_replaced_by: 'EFO:0000999'
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000408',
+                        label: 'disease',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: true,
+                        is_defining_ontology: true
                     })
-                    .get('/ols4/api/terms')
-                    .query(query => query.obo_id === 'EFO:0000001')
+                    .get('/ols4/api/ontologies/efo/terms/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000001')
                     .reply(200, {
-                        _embedded: {
-                            terms: [{
-                                iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
-                                label: 'experimental factor',
-                                ontology_name: 'efo',
-                                short_form: 'EFO_0000001',
-                                is_obsolete: false
-                            }]
-                        }
+                        iri: 'http://www.ebi.ac.uk/efo/EFO_0000001',
+                        label: 'experimental factor',
+                        ontologyId: 'efo',
+                        has_children: false,
+                        is_obsolete: false,
+                        is_defining_ontology: true
                     });
             }
 
