@@ -6,23 +6,31 @@ describe('OLS4Client', () => {
     let client;
     const testBaseUrl = 'https://test-ols4.example.com/';
     
+    const runLive = process.env.BV_LIVE_OLS === '1';
+    
     beforeAll(() => {
-        // Disable real HTTP connections, allow localhost if needed for test infrastructure
-        nock.disableNetConnect();
-        nock.enableNetConnect('127.0.0.1');
+        if (!runLive) {
+            // Disable real HTTP connections, allow localhost if needed for test infrastructure
+            nock.disableNetConnect();
+            nock.enableNetConnect('127.0.0.1');
+        }
     });
 
     beforeEach(() => {
         // Clear cache before each test
         clearCache();
         client = new OLS4Client(testBaseUrl);
-        // Clear any pending nock interceptors
-        nock.cleanAll();
+        if (!runLive) {
+            // Clear any pending nock interceptors
+            nock.cleanAll();
+        }
     });
 
     afterAll(() => {
-        nock.enableNetConnect();
-        nock.restore();
+        if (!runLive) {
+            nock.enableNetConnect();
+            nock.restore();
+        }
     });
 
     describe('constructor', () => {
@@ -45,6 +53,14 @@ describe('OLS4Client', () => {
             // Should contain encoded colons and potentially double-encoded percents
             expect(encoded).toContain('%253A'); // Double-encoded colon
             expect(encoded).toContain('%252F'); // Double-encoded forward slash
+        });
+
+        it('should match the explicit double-encoding example', () => {
+            const iri = 'http://purl.obolibrary.org/obo/EFO_0000408';
+            const encoded = client._doubleEncodeIri(iri);
+            
+            // Assert the expected double-encoded result from documentation
+            expect(encoded).toBe('http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000408');
         });
     });
 

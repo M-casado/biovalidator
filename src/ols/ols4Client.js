@@ -18,7 +18,15 @@ class OLS4Client {
      * 1. First encoding: : becomes %3A, / becomes %2F, etc.
      * 2. Second encoding: % becomes %25, so %3A becomes %253A
      * 
-     * See OLS4 documentation: https://www.ebi.ac.uk/ols4/ols3help
+     * Example:
+     * IRI:  http://purl.obolibrary.org/obo/EFO_0000408
+     * 1×:   http%3A%2F%2Fpurl.obolibrary.org%2Fobo%2FEFO_0000408
+     * 2×:   http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FEFO_0000408
+     * 
+     * OLS4 help: "For IRI parameters, the value must be URL encoded." In practice, 
+     * path handlers require double-encoded IRIs; we assert for this.
+     * See: https://www.ebi.ac.uk/ols4/help and https://www.biostars.org/p/9591022/
+     * 
      * @private
      * @param {string} iri - The IRI to encode
      * @returns {string} Double URL encoded IRI
