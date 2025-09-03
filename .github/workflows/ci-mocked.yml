@@ -27,7 +27,7 @@ jobs:
   test:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 6
 
     steps:
       - name: Checkout
