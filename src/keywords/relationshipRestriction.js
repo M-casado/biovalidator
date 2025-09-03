@@ -1,11 +1,12 @@
 const Ajv = require("ajv").default;
 const CustomAjvError = require("../model/custom-ajv-error");
 const { logger } = require("../utils/winston");
-const { IdFormat } = require("../utils/idParsing");
+const { IdentifierParser, IdFormat } = require("../utils/idParsing");
 
 class RelationshipRestriction {
-    constructor() {
+    constructor(olsBaseUrl = 'https://www.ebi.ac.uk/ols4/') {
         this.keywordName = "relationshipRestriction";
+        this.identifierParser = new IdentifierParser(olsBaseUrl);
         
         // Track deprecation warnings to emit only once per process
         this._deprecationWarnings = new Set();
@@ -42,10 +43,69 @@ class RelationshipRestriction {
                 throw new Ajv.ValidationError(parsedOptions.errors.map(err => generateErrorObject(err)));
             }
 
-            // For now, just validate options and return true (no traversal yet)
-            // TODO: Implement actual ontology traversal in future steps
-            logger.debug(`relationshipRestriction validation passed for term: ${data} with options:`, parsedOptions.options);
-            return true;
+            const options = parsedOptions.options;
+
+            try {
+                // Step 4: Use IdentifierParser to resolve input data to IRI/ontology
+                logger.debug(`Parsing input identifier: ${data} for ontologies: ${options.ontologies.join(', ')}`);
+                
+                const parsedData = await this.identifierParser.parseIdentifier(data, options.ontologies, {
+                    idFormat: options.idFormat,
+                    allowObsolete: options.allowObsolete,
+                    cacheResults: true
+                });
+
+                logger.debug(`Resolved input identifier: ${data} → ${parsedData.iri} (ontology: ${parsedData.ontology})`);
+
+                // Normalize targets: resolve CURIEs to IRIs but keep original string content for error messages
+                const normalizedTargets = [];
+                for (const target of options.targets) {
+                    try {
+                        // Try to parse target if it looks like a CURIE
+                        if (this.identifierParser.isCurie(target)) {
+                            logger.debug(`Parsing target CURIE: ${target}`);
+                            const parsedTarget = await this.identifierParser.parseIdentifier(target, options.ontologies, {
+                                idFormat: IdFormat.ANY, // Targets can be either CURIE or IRI
+                                allowObsolete: options.allowObsolete,
+                                cacheResults: true
+                            });
+                            // Store both original and IRI for future reference
+                            normalizedTargets.push({
+                                original: target,
+                                iri: parsedTarget.iri,
+                                ontology: parsedTarget.ontology
+                            });
+                            logger.debug(`Resolved target CURIE: ${target} → ${parsedTarget.iri}`);
+                        } else {
+                            // Assume it's already an IRI, store as-is
+                            normalizedTargets.push({
+                                original: target,
+                                iri: target,
+                                ontology: null // Will be determined during relationship checking
+                            });
+                            logger.debug(`Target assumed to be IRI: ${target}`);
+                        }
+                    } catch (error) {
+                        logger.warn(`Failed to parse target ${target}: ${error.message}`);
+                        // Still include it, but mark as unparseable
+                        normalizedTargets.push({
+                            original: target,
+                            iri: target,
+                            ontology: null,
+                            parseError: error.message
+                        });
+                    }
+                }
+
+                // TODO: Implement actual ontology traversal logic using parsedData and normalizedTargets
+                // For now, just validate that parsing succeeded and return true
+                logger.debug(`relationshipRestriction validation passed for term: ${data} (${parsedData.iri}) with ${normalizedTargets.length} targets`);
+                return true;
+
+            } catch (error) {
+                logger.error(`relationshipRestriction validation failed for ${data}: ${error.message}`);
+                throw generateErrorObject(error.message);
+            }
         };
     }
 

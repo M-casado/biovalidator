@@ -1,3 +1,4 @@
+const nock = require('nock');
 const Ajv = require('ajv').default;
 const RelationshipRestriction = require('../../src/keywords/relationshipRestriction');
 
@@ -5,10 +6,44 @@ describe('relationshipRestriction - Options Parsing', () => {
     let ajv;
     let relationshipRestriction;
 
+    // Set up hermetic testing environment
+    const runLive = process.env.BV_LIVE_OLS === '1';
+    if (!runLive) {
+        beforeAll(() => nock.disableNetConnect());
+        afterAll(() => nock.enableNetConnect());
+    }
+
     beforeEach(() => {
         ajv = new Ajv({ allErrors: true });
         relationshipRestriction = new RelationshipRestriction();
         relationshipRestriction.configure(ajv);
+
+        // Clear any existing nocks and add generic mock for all OLS requests
+        if (!runLive) {
+            nock.cleanAll();
+            // Add a generic mock for any OLS request to prevent network calls
+            nock('https://www.ebi.ac.uk')
+                .persist()
+                .get('/ols4/api/terms')
+                .query(true)
+                .reply(200, {
+                    _embedded: {
+                        terms: [{
+                            iri: 'http://purl.obolibrary.org/obo/UBERON_0000062',
+                            label: 'organ',
+                            ontology_name: 'uberon',
+                            short_form: 'UBERON_0000062',
+                            is_obsolete: false
+                        }]
+                    }
+                });
+        }
+    });
+
+    afterEach(() => {
+        if (!runLive) {
+            nock.cleanAll();
+        }
     });
 
     describe('$async requirement', () => {
