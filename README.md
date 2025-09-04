@@ -445,6 +445,24 @@ Run in onetime CLI mode
 docker run quay.io/ebi-ait/biovalidator:2.2.2 --schema /path/to/schema.json --data /path/to/data.json
 ```
 
+## Testing
+
+Biovalidator supports two testing modes to ensure reliability without external dependencies by default:
+
+### Default (Hermetic) Mode
+```shell
+npm test
+```
+The default test suite uses **[Nock](https://github.com/nock/nock)** to mock HTTP requests, providing fast and deterministic tests that don't require network access. This approach ensures tests are reliable and repeatable across different environments.
+
+### Live OLS Smoke Tests  
+```shell
+npm run test:live
+```
+Live tests execute against the real **[OLS4 API](https://www.ebi.ac.uk/ols4/help)** to verify integration behavior. These tests require network access and may be affected by upstream ontology changes or API availability.
+
+**Note:** Live tests are primarily intended for maintainers to verify integration points. They may be flaky due to external dependencies and should not be used in CI environments where network access is restricted.
+
 ## Development
 For development purposes using [nodemon](https://nodemon.io/) is useful. It reloads the application every time something has changed on save time.
 ```

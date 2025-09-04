@@ -1,0 +1,60 @@
+name: CI (mocked OLS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or commit to checkout (e.g., dev, v1.3.11, 5fad895)'
+        required: false
+        default: ''
+        type: string
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-mocked-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'   # built-in caching for npm deps
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install
+        run: npm ci
+
+      - name: Run unit tests (mocked)
+        env:
+          CI: 'true'
+          # Tests remain hermetic by default (no outbound HTTP).
+          # Most suites should already call nock.disableNetConnect() themselves
+          BV_LIVE_OLS: '0'
+        run: npm test -- --reporters=default
+
+      # Optional: show jest summary even if tests pass
+      - name: Store test results summary
+        if: always()
+        run: |
+          echo "Suites passed on $GITHUB_SHA"

@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/biovalidator.js",
     "test": "jest --runInBand",
+    "test:live": "BV_LIVE_OLS=1 npm test -- test/integration",
     "test-watch": "nodemon --exec \"npm test\"",
     "travis-test": "jest test/validator.test.js"
   },
@@ -42,6 +43,7 @@
     "axios-mock-adapter": "^2.1.0",
     "bufferutil": "^4.0.2",
     "jest": "^29.7.0",
+    "nock": "^14.0.10",
     "nodemon": "^3.1.9",
     "supertest": "^6.3.3",
     "ts-node": "^9.1.0",

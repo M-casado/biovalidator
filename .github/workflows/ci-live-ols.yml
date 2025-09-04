@@ -1,0 +1,55 @@
+name: CI (live OLS integration)
+
+on:
+  # Run on demand and on PR updates.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or commit to checkout (e.g., dev, v1.3.11, 5fad895)'
+        required: false
+        default: ''
+        type: string
+  pull_request:
+
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-live-ols-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install
+        run: npm ci
+
+      - name: Run live OLS tests only
+        env:
+          CI: 'true'
+          BV_LIVE_OLS: '1'   # gate that enables live/integration tests
+        run: |
+          npx jest --runTestsByPath "test/integration/graphRestriction.live.test.js" || npx jest "test/integration"

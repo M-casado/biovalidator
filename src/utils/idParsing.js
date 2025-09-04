@@ -1,10 +1,6 @@
-const axios = require('axios');
-const qs = require('qs');
 const { logger } = require('./winston');
 const { getCache, keyFor, clearCache: clearSharedCache } = require('./cache');
-
-// Constants
-const DEFAULT_TIMEOUT = 10000; // 10 seconds
+const OLS4Client = require('../ols/ols4Client');
 
 /**
  * Valid identifier format requirements
@@ -36,6 +32,7 @@ class IdentifierParser {
      */
     constructor(olsBaseUrl) {
         this.olsBaseUrl = olsBaseUrl.endsWith('/') ? olsBaseUrl : olsBaseUrl + '/';
+        this.olsClient = new OLS4Client(this.olsBaseUrl);
         
         // Static patterns for identifier format detection
         this.IRI_PATTERN = /^https?:\/\/.+/i;
@@ -100,130 +97,72 @@ class IdentifierParser {
             return cached;
         }
 
-        // Build query parameters - use array for proper ontology parameter serialization
-        const queryParams = {
-            ontology: normalizedOntologies
-        };
-
-        // Determine identifier type and set appropriate query
-        if (this.IRI_PATTERN.test(termId)) {
-            queryParams.iri = termId; // Let axios handle URL encoding
-        } else if (this.CURIE_PATTERN.test(termId)) {
-            queryParams.obo_id = termId;
+        // Convert identifier to IRI if needed for OLS4Client.getTerm()
+        let targetIri = termId;
+        
+        if (this.CURIE_PATTERN.test(termId)) {
+            // Convert CURIE to IRI using OBO pattern
+            const [prefix, localPart] = termId.split(':');
+            targetIri = `http://purl.obolibrary.org/obo/${prefix}_${localPart}`;
         } else if (this.SHORT_FORM_PATTERN.test(termId)) {
-            queryParams.short_form = termId;
-        } else {
+            // Convert short form to IRI using OBO pattern
+            const [prefix, localPart] = termId.split('_');
+            targetIri = `http://purl.obolibrary.org/obo/${prefix}_${localPart}`;
+        } else if (!this.IRI_PATTERN.test(termId)) {
             throw new Error(
                 'Invalid identifier format: must be an IRI, CURIE (prefix:localPart), or OLS short form (prefix_localPart)'
             );
         }
 
-        try {
-            const response = await axios.get(`${this.olsBaseUrl}api/terms`, {
-                params: queryParams,
-                validateStatus: status => status >= 200 && status < 300, // Accept any 2xx response
-                timeout: options.timeout || DEFAULT_TIMEOUT,
-                paramsSerializer: {
-                    serialize: params => qs.stringify(params, { arrayFormat: 'repeat' })
-                }
-            });
-            
-            // Handle potential 204 No Content or other empty success responses
-            if (!response.data || response.status === 204) {
-                logger.warn(`No content in OLS response for term: ${termId}`);
-                throw new Error(`Term '${termId}' not found in ontologies: ${normalizedOntologies.join(', ')}`);
-            }
+        // Try each ontology in sequence until we find the term
+        let lastError;
+        for (const ontologyId of normalizedOntologies) {
+            try {
+                logger.debug(`Trying to find term ${termId} (${targetIri}) in ontology: ${ontologyId}`);
+                
+                const term = await this.olsClient.getTerm({
+                    ontologyId: ontologyId,
+                    iri: targetIri
+                });
 
-            // Handle OLS4 embedded response structure
-            const responseData = response.data?._embedded?.terms;
-            if (!Array.isArray(responseData)) {
-                logger.error(`Invalid OLS response structure for term: ${termId}`);
-                throw new Error('Invalid response from OLS API - missing embedded terms');
-            }
+                // Build the resolved result in the same format as before
+                const resolved = {
+                    iri: term.iri,
+                    ontology: term.ontologyId,
+                    shortForm: this._generateShortForm(term.iri),
+                    label: term.label,
+                    isObsolete: term.is_obsolete || false,
+                    type: EntityType.CLASS // OLS4Client doesn't provide type info, assume class
+                };
 
-            if (responseData.length === 0) {
-                logger.warn(`No terms found for: ${termId}`);
-                throw new Error(`Term '${termId}' not found in ontologies: ${normalizedOntologies.join(', ')}`);
-            }
-
-            let term;
-            if (responseData.length > 1 && queryParams.iri) {
-                // For IRI queries, try to find exact match first
-                term = responseData.find(t => t.iri === termId);
-                if (!term) {
-                    logger.warn(`Multiple terms found for IRI: ${termId}, no exact match. Using first result.`);
-                    term = responseData[0];
-                }
-            } else if (responseData.length > 1) {
-                logger.warn(`Multiple terms found for: ${termId}. Using first match.`);
-                term = responseData[0];
-            } else {
-                term = responseData[0];
-            }
-
-            // Extract and validate required fields
-            const resolved = {
-                iri: term.iri,
-                ontology: term.ontology_name,
-                shortForm: term.short_form || this._generateShortForm(term.iri),
-                label: term.label || null,
-                isObsolete: term.is_obsolete || false,
-                type: this._determineEntityType(term)
-            };
-
-            // Handle obsolete terms
-            if (resolved.isObsolete) {
-                const message = term.term_replaced_by 
-                    ? `Term ${termId} is obsolete, replaced by: ${term.term_replaced_by}`
-                    : `Term ${termId} is obsolete with no replacement`;
+                // Handle obsolete terms
+                if (resolved.isObsolete) {
+                    const message = `Term ${termId} is obsolete with no replacement`;
+                    logger.warn(message);
                     
-                logger.warn(message);
-                
-                if (term.term_replaced_by) {
-                    resolved.replacedBy = term.term_replaced_by;
+                    if (options.allowObsolete === false) {
+                        throw new Error(message);
+                    }
                 }
-                
-                if (options.allowObsolete === false) {
-                    throw new Error(message);
+
+                // Cache if enabled
+                if (options.cacheResults) {
+                    cache.set(cacheKey, resolved);
+                    logger.debug(`Cached term: ${termId}`);
                 }
-            }
 
-            // Validate the resolved ontology is in our allowed list
-            // Prefer ontologyId/ontology_prefix over ontology_name for stricter matching
-            const termOntology = term.ontologyId || term.ontology_prefix || term.ontology_name;
-            if (!termOntology || !normalizedOntologies.includes(termOntology.toLowerCase())) {
-                logger.error(
-                    `Term ${termId} found in ontology ${termOntology || 'unknown'} but restricted to: ${normalizedOntologies.join(', ')}`
-                );
-                throw new Error(
-                    `Term ${termId} found in ontology ${termOntology || 'unknown'} but only ${normalizedOntologies.join(', ')} allowed`
-                );
-            }
-            
-            // Store the actual matched ontology ID in the result
-            resolved.ontology = termOntology;
+                logger.debug(`Successfully found term ${termId} in ontology: ${ontologyId}`);
+                return resolved;
 
-            // Cache if enabled
-            if (options.cacheResults) {
-                const cache = getCache();
-                cache.set(cacheKey, resolved);
-                logger.debug(`Cached term: ${termId}`);
+            } catch (error) {
+                lastError = error;
+                logger.debug(`Term ${termId} not found in ontology ${ontologyId}: ${error.message}`);
+                // Continue to next ontology
             }
-
-            return resolved;
-
-        } catch (error) {
-            if (error.response) {
-                logger.error(`OLS API error for term ${termId}: ${error.response.status}`);
-                throw new Error(
-                    `OLS API error: ${error.response.data?.message || error.message}`
-                );
-            }
-            if (error.code === 'ECONNABORTED') {
-                throw new Error(`OLS API request timed out after ${options.timeout || DEFAULT_TIMEOUT}ms`);
-            }
-            throw error; // Re-throw unexpected errors
         }
+
+        // If we get here, the term wasn't found in any ontology
+        throw new Error(`Term '${termId}' not found in ontologies: ${normalizedOntologies.join(', ')}. Last error: ${lastError?.message || 'Unknown error'}`);
     }
 
     /**
