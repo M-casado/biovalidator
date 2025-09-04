@@ -10,12 +10,6 @@ on:
         default: ''
         type: string
   pull_request:
-  push:
-    branches:
-      - '**'
-    paths-ignore:
-      - '**.md'
-      - '.github/**'
 
 
 permissions:
