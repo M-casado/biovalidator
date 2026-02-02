@@ -114,3 +114,18 @@ test("Draft 2020 - invalid", () => {
     expect(data.length).toBeGreaterThan(0);
   });
 });
+
+// Sanity checks for AJV context selection
+test("AJV context selection - 2019 schema", () => {
+  let inputSchema = JSON.parse(fs.readFileSync("examples/schemas/draft2019-9-support-schema.json"));
+  const ctx = biovalidator._getAjvContextForSchema(inputSchema);
+  expect(ctx).toBeDefined();
+  expect(ctx.type).toBe("2019");
+});
+
+test("AJV context selection - 2020 schema", () => {
+  let inputSchema = JSON.parse(fs.readFileSync("examples/schemas/draft2020-12-support-schema.json"));
+  const ctx = biovalidator._getAjvContextForSchema(inputSchema);
+  expect(ctx).toBeDefined();
+  expect(ctx.type).toBe("2020");
+});

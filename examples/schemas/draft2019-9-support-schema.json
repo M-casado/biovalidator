@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2019-09/schema",
+  "$id": "draft2019-9-support-schema.json",
   "type": "object",
   "unevaluatedProperties": false,
   "$comment": "'a' is required, and 'b' is evaluated. If only 'a' or 'b' is present, the object is valid. If another property (e.g., 'c') not defined in these subschemas is present, the object is invalid.",
