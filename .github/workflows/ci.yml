@@ -14,10 +14,6 @@ on:
         required: false
         default: 'dev'
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   test:
     name: Run tests (Node ${{ matrix.node-version }})
