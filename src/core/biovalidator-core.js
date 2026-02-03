@@ -227,8 +227,12 @@ class BioValidator {
      */
     _initAjvContexts(localSchemaPath) {
         // Build a context object for each draft family
-        this.ajvContexts['2019'] = this._createAjvContext('2019', localSchemaPath);
-        this.ajvContexts['2020'] = this._createAjvContext('2020', localSchemaPath);
+        // Collect schema files once to avoid scanning the directory twice (performance)
+        // Ensure we pass an Array to _createAjvContext/_preCompileLocalSchemas since getFiles() returns a Set
+        const schemaFilesSet = localSchemaPath ? getFiles(localSchemaPath) : new Set();
+        const schemaFiles = Array.from(schemaFilesSet);
+        this.ajvContexts['2019'] = this._createAjvContext('2019', schemaFiles);
+        this.ajvContexts['2020'] = this._createAjvContext('2020', schemaFiles);
     }
 
     /**
@@ -238,7 +242,7 @@ class BioValidator {
      * - referencedSchemaCache: cache for schemas loaded via $ref
      * - validatorCache: cache for compiled schema functions
      */
-    _createAjvContext(type, localSchemaPath) {
+    _createAjvContext(type, schemaFiles) {
         const referencedSchemaCache = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
         const validatorCache = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
 
@@ -295,8 +299,8 @@ class BioValidator {
             ajvInstance = customKeywordValidator.configure(ajvInstance);
         });
 
-        // Pre-compile local schemas into the appropriate context
-        this._preCompileLocalSchemas(ajvInstance, localSchemaPath, {referencedSchemaCache, type});
+        // Pre-compile local schemas into the appropriate context (only once per schemaFiles)
+        this._preCompileLocalSchemas(ajvInstance, schemaFiles, {referencedSchemaCache, type});
 
         return { ajv: ajvInstance, referencedSchemaCache, validatorCache, type };
     }
@@ -325,23 +329,28 @@ class BioValidator {
         return ajvInstance;
     }
 
-    _preCompileLocalSchemas(ajv, localSchemaPath, context) {
-        if (localSchemaPath) {
-            logger.info(`Compiling local schema from: ${localSchemaPath} into context: ${context.type}`);
-            let schemaFiles = getFiles(localSchemaPath);
+    _preCompileLocalSchemas(ajv, schemaFiles, context) {
+        if (schemaFiles && schemaFiles.length) {
+            logger.info(`Compiling local schema from: list (count: ${schemaFiles.length}) into context: ${context.type}`);
             for (let file of schemaFiles) {
                 let schema = readFile(file);
                 this._insertAsyncToSchemasAndDefs(schema);
                 // Determine which context the schema belongs to based on its $schema
                 const schemaType = (typeof schema.$schema === 'string' && schema.$schema.includes('2020')) ? '2020' : '2019';
                 if (schemaType === context.type) {
-                    ajv.getSchema(schema["$id"] || ajv.compile(schema)); // add to AJV cache if not already present
-                    context.referencedSchemaCache.set(schema["$id"], schema);
-                    logger.info("Adding compiled local schema to cache: " + schema["$id"] + " in context: " + context.type);
+                    try {
+                        ajv.getSchema(schema["$id"] || ajv.compile(schema)); // add to AJV cache if not already present
+                        context.referencedSchemaCache.set(schema["$id"], schema);
+                        logger.info("Adding compiled local schema to cache: " + schema["$id"] + " in context: " + context.type);
+                    } catch (e) {
+                        logger.error(`Failed to pre-compile local schema ${schema["$id"] || file} into context ${context.type}: ${e.message || e}`);
+                    }
                 } else {
                     logger.debug("Skipping local schema for context " + context.type + ": " + (schema["$id"] || '(no $id)'));
                 }
             }
+        } else {
+            logger.debug(`No local schema files to pre-compile for context: ${context.type}`);
         }
     }
 }
