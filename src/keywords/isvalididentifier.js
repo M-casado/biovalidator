@@ -22,7 +22,7 @@ class IsValidIdentifier {
     }
 
     validationFunction() {
-        const cachedIdentifiers = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});;
+        const { identifiersCache } = require('./shared-cache');
 
         const generateErrorObject = (message) => {
             return new CustomAjvError(this.keywordName, message, {});
@@ -44,8 +44,8 @@ class IsValidIdentifier {
                 }
 
                 let responsePromise;
-                if (cachedIdentifiers.has(identifier)) {
-                    responsePromise = Promise.resolve(cachedIdentifiers.get(identifier));
+                if (identifiersCache.has(identifier)) {
+                    responsePromise = Promise.resolve(identifiersCache.get(identifier));
                     logger.debug("Returning cached response for identifiers.org request: " + identifier)
                 } else {
                     responsePromise = axios({
@@ -56,7 +56,7 @@ class IsValidIdentifier {
                 }
 
                 responsePromise.then((response) => {
-                    cachedIdentifiers.set(identifier, response);
+                    identifiersCache.set(identifier, response);
                     if (response.status === 200 && response.data.payload.resolvedResources.length > 0) {
                         const resolvedUrl = response.data.payload.resolvedResources[0].compactIdentifierResolvedUrl;
                         logger.debug(`Returning resolved term: ${identifier} -> ${resolvedUrl}`);
@@ -64,7 +64,7 @@ class IsValidIdentifier {
                         errors.push(generateErrorObject(`Failed to resolve term from identifiers.org. [${response.errors}]`));
                     }
                 }).catch(function (error) {
-                    if (error.response.status === 400) {
+                    if (error.response && error.response.status === 400) {
                         errors.push(generateErrorObject(`Failed to resolve term from identifiers.org. [${error.response.data.errorMessage}]`));
                     } else {
                         errors.push(generateErrorObject(`Failed to resolve term from identifiers.org. [${error}]`));

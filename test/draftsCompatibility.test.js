@@ -64,53 +64,68 @@ test("Draft 07 - invalid", () => {
 });
 
 test("Draft 2019 - valid", () => {
-  const fileContent = fs.readFileSync(
-    path.join(__dirname, "..", "examples", "both", "test-2019SchemaDraft-valid.json"),
-    "utf-8"
-  );
-  const { schema, data } = JSON.parse(fileContent);
+  let inputSchema = fs.readFileSync("examples/schemas/draft2019-9-support-schema.json");
+  let jsonSchema = JSON.parse(inputSchema);
 
-  return biovalidator.validate(schema, data).then((errors) => {
-    expect(errors).toBeDefined();
-    expect(errors.length).toBe(0);
+  let inputObj = fs.readFileSync("examples/objects/draft2019-9-support_pass.json");
+  let jsonObj = JSON.parse(inputObj);
+
+  return biovalidator._validate(jsonSchema, jsonObj).then((data) => {
+    expect(data).toBeDefined();
+    expect(data.length).toBe(0);
   });
 });
 
 test("Draft 2019 - invalid", () => {
-  const fileContent = fs.readFileSync(
-    path.join(__dirname, "..", "examples", "both", "test-2019SchemaDraft-invalid.json"),
-    "utf-8"
-  );
-  const { schema, data } = JSON.parse(fileContent);
+  let inputSchema = fs.readFileSync("examples/schemas/draft2019-9-support-schema.json");
+  let jsonSchema = JSON.parse(inputSchema);
 
-  return biovalidator.validate(schema, data).then((errors) => {
-    expect(errors).toBeDefined();
-    expect(errors.length).toBeGreaterThan(0);
+  let inputObj = fs.readFileSync("examples/objects/draft2019-9-support_fail.json");
+  let jsonObj = JSON.parse(inputObj);
+
+  return biovalidator._validate(jsonSchema, jsonObj).then((data) => {
+    expect(data).toBeDefined();
+    expect(data.length).toBeGreaterThan(0);
   });
 });
 
 test("Draft 2020 - valid", () => {
-  const fileContent = fs.readFileSync(
-    path.join(__dirname, "..", "examples", "both", "test-2020SchemaDraft-valid.json"),
-    "utf-8"
-  );
-  const { schema, data } = JSON.parse(fileContent);
+  let inputSchema = fs.readFileSync("examples/schemas/draft2020-12-support-schema.json");
+  let jsonSchema = JSON.parse(inputSchema);
 
-  return biovalidator.validate(schema, data).then((errors) => {
-    expect(errors).toBeDefined();
-    expect(errors.length).toBe(0);
+  let inputObj = fs.readFileSync("examples/objects/draft2020-12-support_pass.json");
+  let jsonObj = JSON.parse(inputObj);
+
+  return biovalidator._validate(jsonSchema, jsonObj).then((data) => {
+    expect(data).toBeDefined();
+    expect(data.length).toBe(0);
   });
 });
 
 test("Draft 2020 - invalid", () => {
-  const fileContent = fs.readFileSync(
-    path.join(__dirname, "..", "examples", "both", "test-2020SchemaDraft-invalid.json"),
-    "utf-8"
-  );
-  const { schema, data } = JSON.parse(fileContent);
+  let inputSchema = fs.readFileSync("examples/schemas/draft2020-12-support-schema.json");
+  let jsonSchema = JSON.parse(inputSchema);
 
-  return biovalidator.validate(schema, data).then((errors) => {
-    expect(errors).toBeDefined();
-    expect(errors.length).toBeGreaterThan(0);
+  let inputObj = fs.readFileSync("examples/objects/draft2020-12-support_fail.json");
+  let jsonObj = JSON.parse(inputObj);
+
+  return biovalidator._validate(jsonSchema, jsonObj).then((data) => {
+    expect(data).toBeDefined();
+    expect(data.length).toBeGreaterThan(0);
   });
+});
+
+// Sanity checks for AJV context selection
+test("AJV context selection - 2019 schema", () => {
+  let inputSchema = JSON.parse(fs.readFileSync("examples/schemas/draft2019-9-support-schema.json"));
+  const ctx = biovalidator._getAjvContextForSchema(inputSchema);
+  expect(ctx).toBeDefined();
+  expect(ctx.type).toBe("2019");
+});
+
+test("AJV context selection - 2020 schema", () => {
+  let inputSchema = JSON.parse(fs.readFileSync("examples/schemas/draft2020-12-support-schema.json"));
+  const ctx = biovalidator._getAjvContextForSchema(inputSchema);
+  expect(ctx).toBeDefined();
+  expect(ctx.type).toBe("2020");
 });

@@ -1,4 +1,6 @@
 const Ajv = require("ajv").default;
+const Ajv2019 = require("ajv/dist/2019");
+const Ajv2020 = require("ajv/dist/2020");
 const addFormats = require("ajv-formats");
 const axios = require('axios');
 const AppError = require("../model/application-error");
@@ -21,9 +23,11 @@ const customKeywordValidators = [
 
 class BioValidator {
     constructor(localSchemaPath) {
-        this.validatorCache = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
-        this.referencedSchemaCache = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
-        this.ajvInstance = this._getAjvInstance(localSchemaPath);
+        // Maintain separate AJV contexts per draft family to avoid mixing incompatible drafts
+        // '2019' will handle draft-06, draft-07 and draft-2019-09
+        // '2020' will handle draft-2020-12
+        this.ajvContexts = {};
+        this._initAjvContexts(localSchemaPath);
     }
 
     // wrapper around _validate to process output
@@ -54,18 +58,32 @@ class BioValidator {
         });
     }
 
+    // Returns legacy merged cache shape for backward compatibility:
+    // { cachedSchema: [...], referencedSchema: [...] }
     getCachedSchema() {
-        return {
-            "cachedSchema": this.validatorCache.keys(),
-            "referencedSchema": this.referencedSchemaCache.keys()
+        const merged = {
+            cachedSchema: [],
+            referencedSchema: []
         };
+        for (const k of Object.keys(this.ajvContexts)) {
+            merged.cachedSchema = merged.cachedSchema.concat(this.ajvContexts[k].validatorCache.keys());
+            merged.referencedSchema = merged.referencedSchema.concat(this.ajvContexts[k].referencedSchemaCache.keys());
+        }
+        // De-dup entries while keeping order
+        merged.cachedSchema = [...new Set(merged.cachedSchema)];
+        merged.referencedSchema = [...new Set(merged.referencedSchema)];
+        return merged;
     }
 
     clearCachedSchema() {
         logger.info("Clearing all cached schemas and removing AJV instance schemas.");
-        this.ajvInstance.removeSchema();
-        this.validatorCache.flushAll();
-        this.referencedSchemaCache.flushAll();
+        for (const k of Object.keys(this.ajvContexts)) {
+            try {
+                this.ajvContexts[k].ajv.removeSchema();
+            } catch (e) { /* ignore */ }
+            this.ajvContexts[k].validatorCache.flushAll();
+            this.ajvContexts[k].referencedSchemaCache.flushAll();
+        }
     }
 
     // AJV requires $async keyword in schemas if they use any of async custom defined keywords.
@@ -118,6 +136,7 @@ class BioValidator {
         // logger.debug("Final schema after injection:\n" + JSON.stringify(inputSchema, null, 2));
 
         return new Promise((resolve, reject) => {
+            const ajvCtx = this._getAjvContextForSchema(inputSchema);
             const compiledSchemaPromise = this.getValidationFunction(inputSchema);
 
             compiledSchemaPromise.then((validate) => {
@@ -137,7 +156,7 @@ class BioValidator {
                             logger.error("An unexpected error occurred during data validation execution. " + (err.message || err));
                             reject(new AppError("An error occurred while running the validation. " + (err.message || err)));
                         } else {
-                            logger.error("Validation failed with AJV ValidationError: " + this.ajvInstance.errorsText(err.errors, {dataVar: inputObject.alias}));
+                            logger.error("Validation failed with AJV ValidationError: " + ajvCtx.ajv.errorsText(err.errors, {dataVar: inputObject.alias}));
                             resolve(err.errors);
                         }
                     });
@@ -182,82 +201,125 @@ class BioValidator {
     }
 
     getValidationFunction(inputSchema) {
+        const ctx = this._getAjvContextForSchema(inputSchema);
         const schemaId = inputSchema['$id'];
-        if (schemaId && this.validatorCache.has(schemaId)) {
-            logger.info("Returning compiled schema from validator cache, '$id': " + schemaId);
-            return Promise.resolve(this.validatorCache.get(schemaId));
+        if (schemaId && ctx.validatorCache.has(schemaId)) {
+            logger.info(`Returning compiled schema from validator cache (context ${ctx.type}), '$id': ${schemaId}`);
+            return Promise.resolve(ctx.validatorCache.get(schemaId));
         }
 
-        logger.debug(`Compiling schema '$id': ${schemaId || "(no '$id')"}. This will trigger loading of external references.`);
-        const compiledSchemaPromise = this.ajvInstance.compileAsync(inputSchema);
+        logger.debug(`Compiling schema '$id': ${schemaId || "(no '$id')"} (context: ${ctx.type}). This will trigger loading of external references.`);
+        const compiledSchemaPromise = ctx.ajv.compileAsync(inputSchema);
         if (schemaId) {
-            logger.info("Saving compiled schema in validator cache, '$id': " + schemaId);
-            this.validatorCache.set(schemaId, compiledSchemaPromise);
+            logger.info(`Saving compiled schema in validator cache (context ${ctx.type}), '$id': ${schemaId}`);
+            ctx.validatorCache.set(schemaId, compiledSchemaPromise);
         } else {
             logger.warn("Compiling schema with empty schema '$id'. Schema will not be cached in validator cache.");
         }
         return Promise.resolve(compiledSchemaPromise);
     }
 
-    _getAjvInstance(localSchemaPath) {
-        const ajvInstance = new Ajv({
+    /**
+     * Initialize AJV contexts for different draft families.
+     * - '2019' handles draft-06, draft-07 and draft-2019-09
+     * - '2020' handles draft-2020-12
+     * Each context has its own AJV instance and separate caches to avoid cross-draft contamination.
+     */
+    _initAjvContexts(localSchemaPath) {
+        // Build a context object for each draft family
+        // Collect schema files once to avoid scanning the directory twice (performance)
+        // Ensure we pass an Array to _createAjvContext/_preCompileLocalSchemas since getFiles() returns a Set
+        const schemaFilesSet = localSchemaPath ? getFiles(localSchemaPath) : new Set();
+        const schemaFiles = Array.from(schemaFilesSet);
+        this.ajvContexts['2019'] = this._createAjvContext('2019', schemaFiles);
+        this.ajvContexts['2020'] = this._createAjvContext('2020', schemaFiles);
+    }
+
+    /**
+     * Create an AJV context for a given draft family.
+     * Context holds:
+     * - ajv: AJV instance (Ajv2019 or Ajv2020)
+     * - referencedSchemaCache: cache for schemas loaded via $ref
+     * - validatorCache: cache for compiled schema functions
+     */
+    _createAjvContext(type, schemaFiles) {
+        const referencedSchemaCache = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
+        const validatorCache = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
+
+        let AjvClass = (type === '2020') ? Ajv2020 : Ajv2019;
+
+        // loader bound to this context's referencedSchemaCache
+        const loadSchema = (uri) => {
+            logger.debug(`AJV requesting schema load (context: ${type}) for URI: ${uri}`);
+            // skip if it's an official meta-schema
+            if (
+                uri.startsWith("http://json-schema.org/draft") ||
+                uri.startsWith("https://json-schema.org/draft")
+            ) {
+                logger.debug(`Skipping official meta-schema fetch: ${uri}`);
+                return Promise.resolve({});
+            }
+            if (referencedSchemaCache.has(uri)) {
+                logger.debug("Returning referenced schema from reference cache: " + uri);
+                return Promise.resolve(referencedSchemaCache.get(uri));
+            } else {
+                logger.debug(`Fetching referenced schema from network: ${uri}`);
+                return new Promise((resolve, reject) => {
+                    axios({method: "GET", url: uri, responseType: 'json'})
+                        .then(resp => {
+                            const loadedSchema = resp.data;
+                            this._insertAsyncToSchemasAndDefs(loadedSchema);
+                            referencedSchemaCache.set(uri, loadedSchema);
+                            resolve(loadedSchema);
+                        }).catch(err => {
+                            const status = err.response ? err.response.status : "network/DNS/file";
+                            logger.error(
+                                `Failed to fetch referenced schema URI: ${uri} (Status: ${status}). Error: ${err.message || err}`
+                            );
+                            reject(
+                                new AppError(`Failed to resolve $ref via network/DNS/file (Status: ${status}): ${uri}. Original error: ${err.message}`)
+                            );
+                        });
+                });
+            }
+        };
+
+        let ajvInstance = new AjvClass({
             allErrors: true,
-            strict: false, // Setting strict: false might hide some issues but is often needed for complex schemas. If needed, set it to 'log' or true for debugging.
-            loadSchema: this._resolveReference(),
-            $data: true,   // for older draft usage
+            strict: false,
+            loadSchema: loadSchema,
+            $data: true,
         });
 
         addFormats(ajvInstance);
         require("ajv-errors")(ajvInstance);
 
-        this._addCustomKeywordValidators(ajvInstance);
-        this._preCompileLocalSchemas(ajvInstance, localSchemaPath);
+        // add custom keywords to this AJV instance
+        customKeywordValidators.forEach(customKeywordValidator => {
+            ajvInstance = customKeywordValidator.configure(ajvInstance);
+        });
 
-        return ajvInstance;
+        // Pre-compile local schemas into the appropriate context (only once per schemaFiles)
+        this._preCompileLocalSchemas(ajvInstance, schemaFiles, {referencedSchemaCache, type});
+
+        return { ajv: ajvInstance, referencedSchemaCache, validatorCache, type };
     }
 
-     _resolveReference() {
-         // Ensure 'this' context is correct when loadSchema is called by Ajv
-         const self = this;
-         return (uri) => {
-            logger.debug(`AJV requesting schema load (either from network or local cache) for URI: ${uri}`);
-             // skip if it's an official meta-schema
-             if (
-                 uri.startsWith("http://json-schema.org/draft") ||
-                 uri.startsWith("https://json-schema.org/draft")
-             ) {
-                 logger.debug(`Skipping official meta-schema fetch: ${uri}`);
-                 return Promise.resolve({});
-             }
-             if (self.referencedSchemaCache.has(uri)) {
-                 logger.debug("Returning referenced schema from reference cache: " + uri);
-                 return Promise.resolve(self.referencedSchemaCache.get(uri));
-             } else {
-                 logger.debug(`Fetching referenced schema from network: ${uri}`);
-                 return new Promise((resolve, reject) => {
-                     axios({method: "GET", url: uri, responseType: 'json'})
-                         .then(resp => {
-                             const loadedSchema = resp.data;
-                             self._insertAsyncToSchemasAndDefs(loadedSchema);
-                             self.referencedSchemaCache.set(uri, loadedSchema);
-                             resolve(loadedSchema);
-                         }).catch(err => {
-                            // If Axios reached the server but got an HTTP error (e.g., 404, 500...), 
-                            //      err.response exists, and we keep the numeric status
-                            // If the request never left the host (e.g., bad domain), err.response is
-                            //      undefined (?), and we label it "network/DNS/file"
-                             const status = err.response ? err.response.status : "network/DNS/file";
-                             logger.error(
-                                 `Failed to fetch referenced schema URI: ${uri} (Status: ${status}). Error: ${err.message || err}`
-                             );
-                             reject(
-                                 new AppError(`Failed to resolve $ref via network/DNS/file (Status: ${status}): ${uri}. Original error: ${err.message}`)
-                             );
-                         });
-                 });
-             }
-         };
-     }
+    /**
+     * Select the appropriate AJV context for a schema by inspecting its
+     * $schema property. Defaults to the '2019' context for older drafts.
+     */
+    _getAjvContextForSchema(inputSchema) {
+        // Determine which AJV context to use based on the $schema property when available
+        const schemaUri = inputSchema && inputSchema.$schema ? inputSchema.$schema : "";
+        if (typeof schemaUri === 'string' && schemaUri.includes('2020')) {
+            return this.ajvContexts['2020'];
+        }
+        // default to 2019 context (handles older drafts as well)
+        return this.ajvContexts['2019'];
+    }
+
+    // Schema loading is context-specific now and implemented per AJV context (see _createAjvContext).
 
     _addCustomKeywordValidators(ajvInstance) {
         customKeywordValidators.forEach(customKeywordValidator => {
@@ -267,17 +329,28 @@ class BioValidator {
         return ajvInstance;
     }
 
-    _preCompileLocalSchemas(ajv, localSchemaPath) {
-        if (localSchemaPath) {
-            logger.info("Compiling local schema from: " + localSchemaPath);
-            let schemaFiles = getFiles(localSchemaPath);
+    _preCompileLocalSchemas(ajv, schemaFiles, context) {
+        if (schemaFiles && schemaFiles.length) {
+            logger.info(`Compiling local schema from: list (count: ${schemaFiles.length}) into context: ${context.type}`);
             for (let file of schemaFiles) {
                 let schema = readFile(file);
                 this._insertAsyncToSchemasAndDefs(schema);
-                ajv.getSchema(schema["$id"] || ajv.compile(schema)); // add to AJV cache if not already present
-                this.referencedSchemaCache.set(schema["$id"], schema);
-                logger.info("Adding compiled local schema to cache: " + schema["$id"]);
+                // Determine which context the schema belongs to based on its $schema
+                const schemaType = (typeof schema.$schema === 'string' && schema.$schema.includes('2020')) ? '2020' : '2019';
+                if (schemaType === context.type) {
+                    try {
+                        ajv.getSchema(schema["$id"] || ajv.compile(schema)); // add to AJV cache if not already present
+                        context.referencedSchemaCache.set(schema["$id"], schema);
+                        logger.info("Adding compiled local schema to cache: " + schema["$id"] + " in context: " + context.type);
+                    } catch (e) {
+                        logger.error(`Failed to pre-compile local schema ${schema["$id"] || file} into context ${context.type}: ${e.message || e}`);
+                    }
+                } else {
+                    logger.debug("Skipping local schema for context " + context.type + ": " + (schema["$id"] || '(no $id)'));
+                }
             }
+        } else {
+            logger.debug(`No local schema files to pre-compile for context: ${context.type}`);
         }
     }
 }

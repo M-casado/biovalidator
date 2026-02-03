@@ -6,8 +6,9 @@ const {default: ajv} = require("ajv");
 
 class IsChildTermOf {
     constructor(keywordName, olsSearchUrl) {
+        const constants = require('../utils/constants');
         this.keywordName = keywordName ? keywordName : "isChildTermOf";
-        this.olsSearchUrl = olsSearchUrl;
+        this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
     }
 
     configure(ajv) {
@@ -44,32 +45,39 @@ class IsChildTermOf {
                         + "&ontology=" + ontologyId + "&queryFields=iri";
 
                     logger.log("debug", `Evaluating isChildTermOf, query url: [${url}]`);
-                    axios({method: "GET", url: url, responseType: 'json'})
-                        .then((response) => {
-                            if (response.status === 200 && response.data.response.numFound >= 1) {
-                                logger.debug(`Returning resolved relationship from OLS: [${parentTerm}] -> [${ontologyId}]`);
-                            } else if (response.status === 200 && response.data.response.numFound === 0) {
-                                logger.warn(`Failed to resolve relationship from OLS. [${parentTerm}] is not a child of [${parentTerm}]`);
-                                errors.push(
-                                    new CustomAjvError(
-                                        "isChildTermOf", `Provided term is not child of [${parentTerm}]`,
-                                        {keyword: "isChildTermOf"})
-                                );
-                            } else {
-                                logger.error(`Failed to resolve relationship from OLS. Unknown error resolving [${parentTerm}] -> [${parentTerm}]`);
-                                errors.push(new CustomAjvError(
-                                    "isChildTermOf", "Something went wrong while validating term, try again.",
+                    const { olsCache } = require('./shared-cache');
+                    let olsPromise;
+                    if (olsCache.has(url)) {
+                        olsPromise = Promise.resolve(olsCache.get(url));
+                        logger.debug("Returning cached response for OLS request: " + url);
+                    } else {
+                        olsPromise = axios({method: "GET", url: url, responseType: 'json'});
+                    }
+                    olsPromise.then((response) => {
+                        olsCache.set(url, response);
+                        if (response.status === 200 && response.data.response.numFound >= 1) {
+                            logger.debug(`Returning resolved relationship from OLS: [${parentTerm}] -> [${ontologyId}]`);
+                        } else if (response.status === 200 && response.data.response.numFound === 0) {
+                            logger.warn(`Failed to resolve relationship from OLS. [${parentTerm}] is not a child of [${parentTerm}]`);
+                            errors.push(
+                                new CustomAjvError(
+                                    "isChildTermOf", `Provided term is not child of [${parentTerm}]`,
                                     {keyword: "isChildTermOf"})
-                                );
-                            }
-                        })
-                        .catch((error) => {
-                            logger.error(`Failed to resolve relationship from OLS. Unknown error resolving [${parentTerm}] -> [${parentTerm}]. [${error.response.data.errorMessage}]`);
+                            );
+                        } else {
+                            logger.error(`Failed to resolve relationship from OLS. Unknown error resolving [${parentTerm}] -> [${parentTerm}]`);
                             errors.push(new CustomAjvError(
-                                "isChildTermOf", "Something went wrong while validating term, try again." + error.response.data.errorMessage,
+                                "isChildTermOf", "Something went wrong while validating term, try again.",
                                 {keyword: "isChildTermOf"})
                             );
-                        })
+                        }
+                    }).catch((error) => {
+                        logger.error(`Failed to resolve relationship from OLS. Unknown error resolving [${parentTerm}] -> [${parentTerm}]. [${error.response && error.response.data && error.response.data.errorMessage ? error.response.data.errorMessage : error}]`);
+                        errors.push(new CustomAjvError(
+                            "isChildTermOf", "Something went wrong while validating term, try again." + (error.response && error.response.data && error.response.data.errorMessage ? error.response.data.errorMessage : ''),
+                            {keyword: "isChildTermOf"})
+                        );
+                    })
                         .finally(() => {
                             if (errors.length > 0) {
                                 reject(new ajv.ValidationError(errors));
