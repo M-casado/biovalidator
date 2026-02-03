@@ -14,6 +14,10 @@ on:
         required: false
         default: 'dev'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     name: Run tests (Node ${{ matrix.node-version }})
@@ -35,7 +39,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
-      - name: Debug: show Node & npm versions
+      - name: 'Debug: show Node & npm versions'
         run: |
           node -v
           npm -v
