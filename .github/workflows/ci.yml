@@ -3,9 +3,16 @@
 name: CI - Run tests
 
 on:
+  push:
+    branches: [ main ]
   pull_request:
     branches: [ main, dev ]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or tag to run the workflow on (e.g. dev)'
+        required: false
+        default: 'dev'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -23,6 +30,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }} 
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
