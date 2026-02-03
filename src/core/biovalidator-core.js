@@ -224,7 +224,7 @@ class BioValidator {
      * - '2019' handles draft-06, draft-07 and draft-2019-09
      * - '2020' handles draft-2020-12
      * Each context has its own AJV instance and separate caches to avoid cross-draft contamination.
-     */
+     */ 
     _initAjvContexts(localSchemaPath) {
         // Build a context object for each draft family
         // Collect schema files once to avoid scanning the directory twice (performance)
@@ -259,29 +259,54 @@ class BioValidator {
                 logger.debug(`Skipping official meta-schema fetch: ${uri}`);
                 return Promise.resolve({});
             }
+
+            // Check this context's cache first
             if (referencedSchemaCache.has(uri)) {
                 logger.debug("Returning referenced schema from reference cache: " + uri);
                 return Promise.resolve(referencedSchemaCache.get(uri));
-            } else {
-                logger.debug(`Fetching referenced schema from network: ${uri}`);
-                return new Promise((resolve, reject) => {
-                    axios({method: "GET", url: uri, responseType: 'json'})
-                        .then(resp => {
-                            const loadedSchema = resp.data;
-                            this._insertAsyncToSchemasAndDefs(loadedSchema);
-                            referencedSchemaCache.set(uri, loadedSchema);
-                            resolve(loadedSchema);
-                        }).catch(err => {
-                            const status = err.response ? err.response.status : "network/DNS/file";
-                            logger.error(
-                                `Failed to fetch referenced schema URI: ${uri} (Status: ${status}). Error: ${err.message || err}`
-                            );
-                            reject(
-                                new AppError(`Failed to resolve $ref via network/DNS/file (Status: ${status}): ${uri}. Original error: ${err.message}`)
-                            );
-                        });
-                });
             }
+
+            // Check other AJV contexts' caches to avoid unnecessary network fetches
+            for (const ctxKey of Object.keys(this.ajvContexts)) {
+                const otherCtx = this.ajvContexts[ctxKey];
+                if (otherCtx && otherCtx.referencedSchemaCache && otherCtx.referencedSchemaCache.has(uri)) {
+                    logger.debug(`Returning referenced schema from reference cache (context: ${ctxKey}): ${uri}`);
+                    return Promise.resolve(otherCtx.referencedSchemaCache.get(uri));
+                }
+            }
+
+            // Not in any cache; fetch from network
+            logger.debug(`Fetching referenced schema from network: ${uri}`);
+            return new Promise((resolve, reject) => {
+                axios({method: "GET", url: uri, responseType: 'json'})
+                    .then(resp => {
+                        const loadedSchema = resp.data;
+                        this._insertAsyncToSchemasAndDefs(loadedSchema);
+
+                        // Prefer storing into the context that matches the schema's $schema if available
+                        let targetCtx = null;
+                        if (typeof loadedSchema.$schema === 'string' && loadedSchema.$schema.includes('2020')) {
+                            targetCtx = this.ajvContexts['2020'];
+                        } else {
+                            targetCtx = this.ajvContexts['2019'];
+                        }
+
+                        if (targetCtx && targetCtx.referencedSchemaCache) {
+                            targetCtx.referencedSchemaCache.set(uri, loadedSchema);
+                            logger.debug(`Saved referenced schema to cache (context: ${targetCtx.type}): ${uri}`);
+                        }
+
+                        resolve(loadedSchema);
+                    }).catch(err => {
+                        const status = err.response ? err.response.status : "network/DNS/file";
+                        logger.error(
+                            `Failed to fetch referenced schema URI: ${uri} (Status: ${status}). Error: ${err.message || err}`
+                        );
+                        reject(
+                            new AppError(`Failed to resolve $ref via network/DNS/file (Status: ${status}): ${uri}. Original error: ${err.message}`)
+                        );
+                    });
+            });
         };
 
         let ajvInstance = new AjvClass({
