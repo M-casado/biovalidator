@@ -2,7 +2,8 @@ const axios = require('axios');
 
 class CurieExpansion {
     constructor(olsSearchUrl) {
-        this.olsSearchUrl = olsSearchUrl;
+        const constants = require('../utils/constants');
+        this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
         this.cachedOlsCurieResponses = {};
     }
 

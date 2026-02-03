@@ -7,8 +7,9 @@ const NodeCache = require("node-cache");
 
 class GraphRestriction {
     constructor(keywordName, olsSearchUrl) {
+        const constants = require('../utils/constants');
         this.keywordName = keywordName ? keywordName : "graphRestriction";
-        this.olsSearchUrl = olsSearchUrl;
+        this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
     }
 
     /**
@@ -42,7 +43,8 @@ class GraphRestriction {
     }
 
     generateKeywordFunction() {
-        const cachedOlsResponses = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
+        // Use shared OLS cache to avoid duplicate network calls across AJV contexts
+        const { olsCache } = require('./shared-cache');
         const curieExpansion = new CurieExpansion(this.olsSearchUrl);
 
         const callCurieExpansion = (terms) => {
@@ -83,8 +85,8 @@ class GraphRestriction {
                                 + "&ontology=" + ontologyId + "&queryFields=" + queryFields;
 
                             let olsResponsePromise;
-                            if (cachedOlsResponses.has(url)) {
-                                olsResponsePromise = Promise.resolve(cachedOlsResponses.get(url));
+                            if (olsCache.has(url)) {
+                                olsResponsePromise = Promise.resolve(olsCache.get(url));
                                 logger.debug("Returning cached response for OLS request: " + url)
                             } else {
                                 olsResponsePromise = axios({
@@ -95,7 +97,7 @@ class GraphRestriction {
                             }
 
                             olsResponsePromise.then((response) => {
-                                cachedOlsResponses.set(url, response);
+                                olsCache.set(url, response);
                                 if (response.status === 200 && response.data.response.numFound >= 1) {
                                     logger.debug(`Returning resolved term from OLS: [${parentTerm}]`);
                                 } else if (response.status === 200 && response.data.response.numFound === 0) {
