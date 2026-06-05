@@ -245,15 +245,14 @@ node src/biovalidator
 
 ## Extended keywords for ontology and taxonomy validation
 The biovalidator supports four extended keywords for ontology and taxonomy validation: `graphRestriction`, `isChildTermOf`, `isValidTerm` and `isValidTaxonomy`.
+Ontology terms are looked up using the [OLS4 search API](https://www.ebi.ac.uk/ols4/api/search). If OLS4 is unavailable, validation fails with a service error rather than reporting the term as invalid.
 
 ### graphRestriction
-This custom keyword *evaluates if an ontology term is child of another*. This keyword is applied to a string (CURIE) and **passes validation if the term is a child of the term defined in the schema**.
-The keyword requires one or more **parent terms** *(classes)* and **ontology ids** *(ontologies)*, both of which should exist in [OLS - Ontology Lookup Service](https://www.ebi.ac.uk/ols).
+`graphRestriction` checks whether an ontology term is a child of one of the parent terms in `classes`. It requires one or more parent terms and ontology IDs. Ontology IDs are case-sensitive and are usually lower case.
 
-* **ontologies** should be present in EBI OLS and are case-sensitive (most of the OLS ontologies are in lower case)
+`queryFields` is optional. By default, terms are matched against `obo_id`, for example `UBERON:0000955`. Use `["label"]` to validate labels, or `["obo_id", "label"]` to accept either. Matching is exact and case-sensitive.
 
-This keyword works by doing an asynchronous call to the [OLS API](https://www.ebi.ac.uk/ols/api/) that will respond with the required information to know if a given term is child of another.
-Being an async validation step, whenever used in a schema, the schema must have the flag: `"$async": true` in its object root.
+This is an asynchronous keyword, so the schema must have `"$async": true` at its root.
 
 Schema:
 ```json
@@ -263,7 +262,7 @@ Schema:
     "$async": true,
     "properties": {
         "ontology": {
-            "description": "A term from the ontology [UBERON](https://www.ebi.ac.uk/ols/ontologies/uberon) for an organ or a cellular bodily fluid such as blood or lymph.",
+            "description": "A term from the ontology [UBERON](https://www.ebi.ac.uk/ols4/ontologies/uberon) for an organ or a cellular bodily fluid such as blood or lymph.",
             "type": "string",
             "graphRestriction":  {
                 "ontologies" : ["obo:hcao", "obo:uberon"],
@@ -282,11 +281,9 @@ Data:
 ```
 
 ### isChildTermOf
-This custom keyword also *evaluates if an ontology term is child of another* and is a simplified version of the graphRestriction keyword. This keyword is applied to a string (url) and **passes validation if the term is a child of the term defined in the schema**.
-The keyword requires the **parent term** and the **ontology id**, both of which should exist in [OLS - Ontology Lookup Service](https://www.ebi.ac.uk/ols).
+`isChildTermOf` checks whether an ontology term URL is a child of `parentTerm` in the selected ontology. Both `parentTerm` and `ontologyId` must refer to entries in OLS4.
 
-This keyword works by doing an asynchronous call to the [OLS API](https://www.ebi.ac.uk/ols/api/) that will respond with the required information to know if a given term is child of another.
-Being an async validation step, whenever used in a schema, the schema must have the flag: `"$async": true` in its object root.
+This is an asynchronous keyword, so the schema must have `"$async": true` at its root.
 
 Schema:
 ```json
@@ -313,10 +310,9 @@ Data:
 ```
 
 ### isValidTerm
-This custom keyword *evaluates if a given ontology term url exists in OLS* ([Ontology Lookup Service](https://www.ebi.ac.uk/ols)). It is applied to a string (url) and **passes validation if the term exists in OLS**. It can be applied to any string defined in the schema.
+`isValidTerm` checks whether an ontology term URL exists in OLS4.
 
-This keyword works by doing an asynchronous call to the [OLS API](https://www.ebi.ac.uk/ols/api/) that will respond with the required information to determine if the term exists in OLS or not.
-Being an async validation step, whenever used in a schema, the schema must have the flag: `"$async": true` in its object root.
+This is an asynchronous keyword, so the schema must have `"$async": true` at its root.
 
 Schema:
 ```json

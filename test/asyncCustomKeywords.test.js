@@ -1,6 +1,11 @@
+jest.mock("axios");
+
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
 const BioValidator = require("../src/core/biovalidator-core");
+const {olsCache} = require("../src/keywords/shared-cache");
+const {installDefaultOlsMock} = require("./olsTestUtils");
 
 /**
  * In this test, we check how Biovalidator behaves when JSON Schemas
@@ -13,6 +18,9 @@ describe("asyncCustomKeywords test suite", () => {
   let biovalidator;
 
   beforeEach(() => {
+    axios.mockReset();
+    olsCache.flushAll();
+    installDefaultOlsMock(axios);
     // Recreate a brand-new instance for each test. It's required so that we can re-use the same
     // schema (graphRestriction-schema.json) while changing properties inside on the fly.
     // Without cleaning cache, Biovalidator simply reuses the first compiled schema with that $id.

@@ -7,3 +7,4 @@ error_test
 server.pid
 *.log
 *-audit.json
+.vscode/

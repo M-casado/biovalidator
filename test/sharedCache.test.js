@@ -5,6 +5,7 @@ const IsChildTermOf = require('../src/keywords/ischildtermof');
 const IsValidIdentifier = require('../src/keywords/isvalididentifier');
 const axios = require('axios');
 const { olsCache, enaTaxonomyCache, identifiersCache } = require('../src/keywords/shared-cache');
+const {docForTerm, olsResponse} = require('./olsTestUtils');
 
 jest.mock('axios');
 
@@ -33,7 +34,7 @@ describe('Shared caches for keyword network calls', () => {
     const data = 'COB:0000022';
 
     // Mock axios to return a success response
-    axios.mockResolvedValue({ status: 200, data: { response: { numFound: 1 } } });
+    axios.mockResolvedValue(olsResponse([docForTerm(data)]));
 
     const gr = new GraphRestriction();
     const fn = gr.generateKeywordFunction();
@@ -68,7 +69,7 @@ describe('Shared caches for keyword network calls', () => {
     const schema = { ontology: 'efo' };
     const data = 'http://purl.obolibrary.org/obo/UBERON_0002107';
 
-    axios.mockResolvedValue({ status: 200, data: { response: { numFound: 1 } } });
+    axios.mockResolvedValue(olsResponse([docForTerm(data)]));
 
     const t = new IsValidTerm();
     const fn = t.generateKeywordFunction();
@@ -85,7 +86,7 @@ describe('Shared caches for keyword network calls', () => {
     const schema = { parentTerm: 'http://purl.obolibrary.org/obo/UBERON_0002107', ontologyId: 'efo' };
     const data = 'http://purl.obolibrary.org/obo/UBERON_0002108';
 
-    axios.mockResolvedValue({ status: 200, data: { response: { numFound: 1 } } });
+    axios.mockResolvedValue(olsResponse([docForTerm(data)]));
 
     const t = new IsChildTermOf();
     const fn = t.generateKeywordFunction();

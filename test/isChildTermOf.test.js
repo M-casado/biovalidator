@@ -1,21 +1,33 @@
+jest.mock("axios");
+
+const axios = require("axios");
 const fs = require("fs");
-const BioValidator = require('../src/core/biovalidator-core');
-const IsChildTermOf = require('../src/keywords/ischildtermof');
+const BioValidator = require("../src/core/biovalidator-core");
+const {olsCache} = require("../src/keywords/shared-cache");
+const {installDefaultOlsMock} = require("./olsTestUtils");
 
-test("isChildTermOf", () => {
-  let inputSchema = fs.readFileSync("examples/schemas/isChildTerm-schema.json");
-  let jsonSchema = JSON.parse(inputSchema);
+describe("isChildTermOf", () => {
+    beforeEach(() => {
+        axios.mockReset();
+        olsCache.flushAll();
+        installDefaultOlsMock(axios, {
+            notFoundTerms: ["http://purl.obolibrary.org/obo/UO_0000033"]
+        });
+    });
 
-  let inputObj = fs.readFileSync("examples/objects/isChildTerm.json");
-  let jsonObj = JSON.parse(inputObj);
+    test("reports a non-child term without treating OLS as unavailable", async () => {
+        const jsonSchema = JSON.parse(
+            fs.readFileSync("examples/schemas/isChildTerm-schema.json")
+        );
+        const jsonObj = JSON.parse(
+            fs.readFileSync("examples/objects/isChildTerm.json")
+        );
 
+        const validator = new BioValidator();
+        const data = await validator._validate(jsonSchema, jsonObj);
 
-
-  const validator = new BioValidator();
-
-  return validator._validate(jsonSchema, jsonObj).then((data) => {
-    expect(data).toBeDefined();
-    expect(data.length).toBe(1);
-    expect(data[0].message).toContain('Provided term is not child of');
-  });
+        expect(data).toBeDefined();
+        expect(data).toHaveLength(1);
+        expect(data[0].message).toContain("Provided term is not child of");
+    });
 });

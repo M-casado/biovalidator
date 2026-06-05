@@ -1,10 +1,10 @@
-const axios = require('axios');
+const {OlsSearchClient} = require("./ols_search_client");
 
 class CurieExpansion {
     constructor(olsSearchUrl) {
         const constants = require('../utils/constants');
         this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
-        this.cachedOlsCurieResponses = {};
+        this.olsClient = new OlsSearchClient(this.olsSearchUrl);
     }
 
     static isCurie(term) {
@@ -15,36 +15,8 @@ class CurieExpansion {
         return curie;
     }
 
-    expandCurie(term) {
-        const termUri = encodeURIComponent(term);
-        const url = this.olsSearchUrl + termUri
-            + "&exact=true&groupField=true&queryFields=obo_id";
-
-        return new Promise((resolve, reject) => {
-            let curieExpandResponsePromise;
-
-            if (this.cachedOlsCurieResponses[url]) {
-                curieExpandResponsePromise = Promise.resolve(this.cachedOlsCurieResponses[url]);
-            } else {
-                curieExpandResponsePromise = axios({
-                    method: "GET",
-                    url: url,
-                    responseType: 'json'
-                });
-            }
-
-            curieExpandResponsePromise
-                .then((response) => {
-                    this.cachedOlsCurieResponses[url] = response;
-                    if (response.data.response.numFound === 1) {
-                        resolve(response.data.response.docs[0].iri);
-                    } else {
-                        reject("Could not retrieve IRI for " + term);
-                    }
-                }).catch(err => {
-                reject(err)
-            });
-        });
+    async expandCurie(term) {
+        return this.olsClient.resolveUniqueIri(term, ["obo_id"]);
     }
 }
 

@@ -1,5 +1,10 @@
+jest.mock("axios");
+
 const fs = require("fs");
+const axios = require("axios");
 const BioValidator = require("../src/core/biovalidator-core")
+const {installDefaultOlsMock} = require("./olsTestUtils");
+installDefaultOlsMock(axios);
 const biovalidator = new BioValidator();
 const checklistFolder = "test/resources/ena_samples/checklists/";
 const validObjectFolder = "test/resources/ena_samples/objects/valid/";
@@ -7,24 +12,21 @@ const invalidObjectFolder = "test/resources/ena_samples/objects/invalid/";
 const samplePrefix = "SAMEA_";
 
 describe("Sample Checklist tests", () => {
-  it('Sample Checklist tests for valid objects', ()=> {
-    fs.readdir(checklistFolder, (err, files) => {
-      files.forEach(file => {
-        let inputSchema = fs.readFileSync(checklistFolder + file);
-        let jsonSchema = JSON.parse(inputSchema);
+  it('Sample Checklist tests for valid objects', async () => {
+    const files = fs.readdirSync(checklistFolder);
+    await Promise.all(files.map(async (file) => {
+      const jsonSchema = JSON.parse(fs.readFileSync(checklistFolder + file));
+      const jsonObj = JSON.parse(
+        fs.readFileSync(validObjectFolder + samplePrefix + file)
+      );
 
-        let inputObj = fs.readFileSync(validObjectFolder + samplePrefix + file);
-        let jsonObj = JSON.parse(inputObj);
-
-        biovalidator.validate(jsonSchema, jsonObj).then( (data) => {
-          expect(data).toBeDefined();
-          expect(data.length).toBe(0);
-        });
-      });
-    })
+      const data = await biovalidator.validate(jsonSchema, jsonObj);
+      expect(data).toBeDefined();
+      expect(data.length).toBe(0);
+    }));
   });
 
-  it('Sample Checklist tests with invalid objects', ()=> {
+  it('Sample Checklist tests with invalid objects', async () => {
     var missingPropertyMap = new Map([
       ["ERC000012.json", "project name"],
       ["ERC000013.json", "project name"],
@@ -65,26 +67,26 @@ describe("Sample Checklist tests", () => {
       ["ERC000051.json", "sample origin"],
     ]);
 
-    fs.readdir(checklistFolder, (err, files) => {
-      files.forEach(file => {
-        if (file === "ERC000011.json") return;
-        let inputSchema = fs.readFileSync(checklistFolder + file);
-        let jsonSchema = JSON.parse(inputSchema);
+    const files = fs.readdirSync(checklistFolder)
+      .filter((file) => file !== "ERC000011.json");
 
-        let inputObj = fs.readFileSync(invalidObjectFolder + samplePrefix + file);
-        let jsonObj = JSON.parse(inputObj);
+    await Promise.all(files.map(async (file) => {
+      const jsonSchema = JSON.parse(fs.readFileSync(checklistFolder + file));
+      const jsonObj = JSON.parse(
+        fs.readFileSync(invalidObjectFolder + samplePrefix + file)
+      );
 
-        biovalidator.validate(jsonSchema, jsonObj).then( (data) => {
-          expect(data).toBeDefined();
-          if (missingPropertyMap.get(file) != null) {
-            expect(data.length).toBe(1);
-            expect(data[0].errors.length).toBe(1);
-            expect(data[0].errors).toContain('must have required property \'' + missingPropertyMap.get(file) + '\'');
-          } else {
-            expect(data.length).toBe(0);
-          }
-        });
-      });
-    })
+      const data = await biovalidator.validate(jsonSchema, jsonObj);
+      expect(data).toBeDefined();
+      if (missingPropertyMap.get(file) != null) {
+        expect(data.length).toBe(1);
+        expect(data[0].errors.length).toBe(1);
+        expect(data[0].errors[0]).toContain(
+          'must have required property \'' + missingPropertyMap.get(file) + '\''
+        );
+      } else {
+        expect(data.length).toBe(0);
+      }
+    }));
   });
 });

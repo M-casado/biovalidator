@@ -1,15 +1,20 @@
 const CurieExpansion = require("../utils/curie_expansion");
 const ajv = require("ajv").default;
-const axios = require('axios');
 const CustomAjvError = require("../model/custom-ajv-error");
 const {logger} = require("../utils/winston");
-const NodeCache = require("node-cache");
+const {
+    OlsSearchClient,
+    OlsResolutionError
+} = require("../utils/ols_search_client");
+
+const SUPPORTED_QUERY_FIELDS = new Set(["obo_id", "label"]);
 
 class GraphRestriction {
     constructor(keywordName, olsSearchUrl) {
         const constants = require('../utils/constants');
         this.keywordName = keywordName ? keywordName : "graphRestriction";
         this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
+        this.olsClient = new OlsSearchClient(this.olsSearchUrl);
     }
 
     /**
@@ -43,8 +48,6 @@ class GraphRestriction {
     }
 
     generateKeywordFunction() {
-        // Use shared OLS cache to avoid duplicate network calls across AJV contexts
-        const { olsCache } = require('./shared-cache');
         const curieExpansion = new CurieExpansion(this.olsSearchUrl);
 
         const callCurieExpansion = (terms) => {
@@ -63,74 +66,63 @@ class GraphRestriction {
             return new CustomAjvError("graphRestriction", message, {});
         };
 
-        return (schema, data) => {
-            return new Promise((resolve, reject) => {
-                let parentTerms = schema.classes;
-                const ontologyIds = schema.ontologies;
-                let queryFields = schema.queryFields ? schema.queryFields.join(",") : "obo_id";
-                let errors = [];
+        return async (schema, data) => {
+            const parentTerms = schema.classes;
+            const ontologyIds = schema.ontologies;
+            const queryFields = schema.queryFields || ["obo_id"];
 
-                if (parentTerms && ontologyIds) {
-                    if (schema.includeSelf === true && parentTerms.includes(data)) {
-                        resolve(data);
-                    } else {
-                        callCurieExpansion(parentTerms).then((iris) => {
-                            const parentTerm = iris.join(",");
-                            const ontologyId = ontologyIds.join(",").replace(/obo:/g, "");
+            if (!parentTerms || !ontologyIds) {
+                throw new ajv.ValidationError([
+                    generateErrorObject(
+                        "Missing required variable in schema graphRestriction, required properties are: classes and ontologies."
+                    )
+                ]);
+            }
+            if (!Array.isArray(queryFields) || queryFields.length === 0 ||
+                queryFields.some((field) => !SUPPORTED_QUERY_FIELDS.has(field))) {
+                throw new ajv.ValidationError([
+                    generateErrorObject(
+                        "Invalid graphRestriction queryFields. Supported fields are: obo_id, label."
+                    )
+                ]);
+            }
 
-                            const termUri = encodeURIComponent(data);
-                            const url = this.olsSearchUrl + termUri
-                                + "&exact=true&groupField=true&allChildrenOf=" + encodeURIComponent(parentTerm)
-                                // + "&ontology=" + ontologyId + "&queryFields=obo_id,label";
-                                + "&ontology=" + ontologyId + "&queryFields=" + queryFields;
+            if (schema.includeSelf === true && parentTerms.includes(data)) {
+                return data;
+            }
 
-                            let olsResponsePromise;
-                            if (olsCache.has(url)) {
-                                olsResponsePromise = Promise.resolve(olsCache.get(url));
-                                logger.debug("Returning cached response for OLS request: " + url)
-                            } else {
-                                olsResponsePromise = axios({
-                                    method: "GET",
-                                    url: url,
-                                    responseType: 'json'
-                                });
-                            }
-
-                            olsResponsePromise.then((response) => {
-                                olsCache.set(url, response);
-                                if (response.status === 200 && response.data.response.numFound >= 1) {
-                                    logger.debug(`Returning resolved term from OLS: [${parentTerm}]`);
-                                } else if (response.status === 200 && response.data.response.numFound === 0) {
-                                    logger.warn(`Failed to resolve term from OLS. Invalid relationship: [${ontologyId}]`);
-                                    errors.push(generateErrorObject(`Provided term is not child of [${parentTerm}]`));
-                                } else {
-                                    logger.error(`Failed to resolve term from OLS. Unknown error: [${ontologyId}]`);
-                                    errors.push(generateErrorObject("Something went wrong while validating term, try again."));
-                                }
-                            }).catch(err => {
-                                logger.error("Failed to resolve term from OLS. Unknown error: " + err);
-                                errors.push(generateErrorObject(err));
-                            }).finally(function () {
-                                if (errors.length > 0) {
-                                    reject(new ajv.ValidationError(errors));
-                                } else {
-                                    resolve(true);
-                                }
-                            });
-                        }).catch(err => {
-                            logger.error("Failed to resolve term from OLS. Unknown error: " + err);
-                            errors.push(generateErrorObject(err));
-                        }).finally(function () {
-                            if (errors.length > 0) {
-                                reject(new ajv.ValidationError(errors));
-                            }
-                        });
-                    }
-                } else {
-                    errors.push(generateErrorObject("Missing required variable in schema graphRestriction, required properties are: parentTerm and ontologyId."));
-                    reject(ajv.ValidationError);
+            let parentIris;
+            try {
+                parentIris = await callCurieExpansion(parentTerms);
+            } catch (error) {
+                if (error instanceof OlsResolutionError) {
+                    throw new ajv.ValidationError([generateErrorObject(error.message)]);
                 }
-            });
+                logger.error(`OLS service failure while expanding graphRestriction classes: ${error.message || error}`);
+                throw error;
+            }
+
+            const parentTerm = parentIris.join(",");
+            const ontologyId = ontologyIds.join(",").replace(/obo:/g, "");
+
+            try {
+                await this.olsClient.resolveUniqueIri(data, queryFields, {
+                    allChildrenOf: parentTerm,
+                    ontology: ontologyId
+                });
+                logger.debug(`Returning resolved term from OLS: [${data}]`);
+                return true;
+            } catch (error) {
+                if (!(error instanceof OlsResolutionError)) {
+                    logger.error(`OLS service failure while evaluating graphRestriction for [${data}]: ${error.message || error}`);
+                    throw error;
+                }
+
+                const message = error.code === "ambiguous"
+                    ? error.message
+                    : `Provided term is not child of [${parentTerm}]`;
+                throw new ajv.ValidationError([generateErrorObject(message)]);
+            }
         };
 
     }
