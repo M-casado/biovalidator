@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "draft2020-12-support-schema.json",
+  "type": "array",
+  "$comment": "First two items of the array have to be a string 'first' and a number, respectively. The rest of the items have to be booleans.",
+  "prefixItems": [
+    { "const": "first" },
+    { "type": "number" }
+  ],
+  "items": { "type": "boolean" }
+}

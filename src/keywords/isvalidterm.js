@@ -1,12 +1,17 @@
-const axios = require("axios");
 const {logger} = require("../utils/winston");
 const CustomAjvError = require("../model/custom-ajv-error");
 const {default: ajv} = require("ajv");
+const {
+    OlsSearchClient,
+    OlsResolutionError
+} = require("../utils/ols_search_client");
 
 class IsValidTerm {
     constructor(keywordName, olsSearchUrl) {
+        const constants = require('../utils/constants');
         this.keywordName = keywordName ? keywordName : "isValidTerm";
-        this.olsSearchUrl = olsSearchUrl;
+        this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
+        this.olsClient = new OlsSearchClient(this.olsSearchUrl);
     }
 
     configure(ajv) {
@@ -30,52 +35,34 @@ class IsValidTerm {
     }
 
     generateKeywordFunction() {
-        return (schema, data) => {
-            return new Promise((resolve, reject) => {
-                if (schema) {
-                    let errors = [];
+        return async (schema, data) => {
+            if (!schema) {
+                logger.warn(`Trying to work with empty schema. Why are we here : [${schema}]`);
+                return true;
+            }
 
-                    const termUri = data;
-                    const encodedTermUri = encodeURIComponent(termUri);
-                    const url = this.olsSearchUrl + encodedTermUri + "&exact=true&groupField=true&queryFields=iri";
-
-                    axios({method: "GET", url: url, responseType: 'json'})
-                        .then((response) => {
-                            if (response.status === 200 && response.data.response.numFound >= 1) {
-                                logger.debug(`Returning resolved term from OLS: [${termUri}]`);
-                            } else if (response.status === 200 && response.data.response.numFound === 0) {
-                                logger.warn(`Failed to resolve term from OLS. Term not present: [${termUri}]`);
-                                errors.push(new CustomAjvError(
-                                    "isValidTerm", `provided term does not exist in OLS: [${termUri}]`,
-                                    {keyword: "isValidTerm"})
-                                );
-                            } else {
-                                logger.error(`Failed to resolve term from OLS. Unknown error: [${termUri}]`);
-                                errors.push(new CustomAjvError(
-                                    "isValidTerm", "Something went wrong while validating term, try again.",
-                                    {keyword: "isValidTerm"})
-                                );
-                            }
-                        })
-                        .catch((error) => {
-                            logger.error(`Failed to resolve term from OLS. Unknown error: [${termUri}]. [${error.response.data.errorMessage}]`);
-                            errors.push(new CustomAjvError(
-                                "isValidTerm", "Something went wrong while validating term, try again." + error.response.data.errorMessage,
-                                {keyword: "isValidTerm"})
-                            );
-                        })
-                        .finally(() => {
-                            if (errors.length > 0) {
-                                reject(new ajv.ValidationError(errors));
-                            } else {
-                                resolve(true);
-                            }
-                        });
-                } else {
-                    logger.warn(`Trying to work with empty schema. Why are we here : [${schema}]`);
-                    resolve(true);
+            try {
+                await this.olsClient.resolveUniqueIri(data, ["iri"]);
+                logger.debug(`Returning resolved term from OLS: [${data}]`);
+                return true;
+            } catch (error) {
+                if (!(error instanceof OlsResolutionError)) {
+                    logger.error(`OLS service failure while validating term [${data}]: ${error.message || error}`);
+                    throw error;
                 }
-            });
+
+                const message = error.code === "ambiguous"
+                    ? error.message
+                    : `provided term does not exist in OLS: [${data}]`;
+                logger.warn(`Failed to resolve term from OLS: ${message}`);
+                throw new ajv.ValidationError([
+                    new CustomAjvError(
+                        "isValidTerm",
+                        message,
+                        {keyword: "isValidTerm"}
+                    )
+                ]);
+            }
         };
     }
 }

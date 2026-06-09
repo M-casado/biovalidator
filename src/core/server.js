@@ -136,7 +136,12 @@ class BioValidatorServer {
     } catch(err) {
       logger.error("Failed to create PID file. ", err);
       logger.warn(`Please check if another instance of the server is running or else delete the PID file available at ${this.pidPath} before starting the server`)
-      process.exit(1);
+      // In test environments we should not crash the process; tests may start multiple servers
+      if (process.env.NODE_ENV === 'test') {
+        logger.warn("Running under test environment: PID creation failed but continuing without exiting.");
+      } else {
+        process.exit(1);
+      }
     }
 
     // Handles crt + c event

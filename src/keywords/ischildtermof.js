@@ -1,13 +1,17 @@
-const Ajv = require("ajv").default;
-const axios = require('axios');
 const {logger} = require("../utils/winston");
 const CustomAjvError = require("../model/custom-ajv-error");
 const {default: ajv} = require("ajv");
+const {
+    OlsSearchClient,
+    OlsResolutionError
+} = require("../utils/ols_search_client");
 
 class IsChildTermOf {
     constructor(keywordName, olsSearchUrl) {
+        const constants = require('../utils/constants');
         this.keywordName = keywordName ? keywordName : "isChildTermOf";
-        this.olsSearchUrl = olsSearchUrl;
+        this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
+        this.olsClient = new OlsSearchClient(this.olsSearchUrl);
     }
 
     configure(ajv) {
@@ -31,62 +35,45 @@ class IsChildTermOf {
     }
 
     generateKeywordFunction() {
-        return (schema, data) => {
-            return new Promise((resolve, reject) => {
-                const parentTerm = schema.parentTerm;
-                const ontologyId = schema.ontologyId;
-                let errors = [];
+        return async (schema, data) => {
+            const parentTerm = schema.parentTerm;
+            const ontologyId = schema.ontologyId;
 
-                if (parentTerm && ontologyId) {
-                    const termUri = encodeURIComponent(data);
-                    const url = this.olsSearchUrl + termUri
-                        + "&exact=true&groupField=true&allChildrenOf=" + encodeURIComponent(parentTerm)
-                        + "&ontology=" + ontologyId + "&queryFields=iri";
-
-                    logger.log("debug", `Evaluating isChildTermOf, query url: [${url}]`);
-                    axios({method: "GET", url: url, responseType: 'json'})
-                        .then((response) => {
-                            if (response.status === 200 && response.data.response.numFound >= 1) {
-                                logger.debug(`Returning resolved relationship from OLS: [${parentTerm}] -> [${ontologyId}]`);
-                            } else if (response.status === 200 && response.data.response.numFound === 0) {
-                                logger.warn(`Failed to resolve relationship from OLS. [${parentTerm}] is not a child of [${parentTerm}]`);
-                                errors.push(
-                                    new CustomAjvError(
-                                        "isChildTermOf", `Provided term is not child of [${parentTerm}]`,
-                                        {keyword: "isChildTermOf"})
-                                );
-                            } else {
-                                logger.error(`Failed to resolve relationship from OLS. Unknown error resolving [${parentTerm}] -> [${parentTerm}]`);
-                                errors.push(new CustomAjvError(
-                                    "isChildTermOf", "Something went wrong while validating term, try again.",
-                                    {keyword: "isChildTermOf"})
-                                );
-                            }
-                        })
-                        .catch((error) => {
-                            logger.error(`Failed to resolve relationship from OLS. Unknown error resolving [${parentTerm}] -> [${parentTerm}]. [${error.response.data.errorMessage}]`);
-                            errors.push(new CustomAjvError(
-                                "isChildTermOf", "Something went wrong while validating term, try again." + error.response.data.errorMessage,
-                                {keyword: "isChildTermOf"})
-                            );
-                        })
-                        .finally(() => {
-                            if (errors.length > 0) {
-                                reject(new ajv.ValidationError(errors));
-                            } else {
-                                resolve(true);
-                            }
-                        });
-                } else {
-                    logger.error("Failed to resolve relationship from OLS. Missing required variable in schema isChildTermOf, required properties are: parentTerm and ontologyId");
-                    errors.push(new CustomAjvError(
+            if (!parentTerm || !ontologyId) {
+                logger.error("Failed to resolve relationship from OLS. Missing required variable in schema isChildTermOf, required properties are: parentTerm and ontologyId");
+                throw new ajv.ValidationError([
+                    new CustomAjvError(
                         "isChildTermOf",
                         "Missing required variable in schema isChildTermOf, required properties are: parentTerm and ontologyId.",
-                        {keyword: "isChildTermOf"})
-                    );
-                    reject(new Ajv.ValidationError(errors));
+                        {keyword: "isChildTermOf"}
+                    )
+                ]);
+            }
+
+            try {
+                await this.olsClient.resolveUniqueIri(data, ["iri"], {
+                    allChildrenOf: parentTerm,
+                    ontology: ontologyId
+                });
+                logger.debug(`Returning resolved relationship from OLS: [${parentTerm}] -> [${ontologyId}]`);
+                return true;
+            } catch (error) {
+                if (!(error instanceof OlsResolutionError)) {
+                    logger.error(`OLS service failure while resolving relationship for [${data}]: ${error.message || error}`);
+                    throw error;
                 }
-            });
+
+                const message = error.code === "ambiguous"
+                    ? error.message
+                    : `Provided term is not child of [${parentTerm}]`;
+                throw new ajv.ValidationError([
+                    new CustomAjvError(
+                        "isChildTermOf",
+                        message,
+                        {keyword: "isChildTermOf"}
+                    )
+                ]);
+            }
         }
     }
 }

@@ -33,6 +33,7 @@ class IsValidTaxonomy {
     }
 
     generateKeywordFunction() {
+        const { enaTaxonomyCache } = require('./shared-cache');
         return (schema, data) => {
             return new Promise((resolve, reject) => {
                 if (schema) {
@@ -44,9 +45,19 @@ class IsValidTaxonomy {
 
                     logger.log("debug", `Looking for taxonomy [${taxonomyExpression}] with ENA taxonomy validator.`);
 
-                    axios({method: "GET", url: url, responseType: 'json'})
+                    let taxonomyPromise;
+                    if (enaTaxonomyCache.has(url)) {
+                        taxonomyPromise = Promise.resolve(enaTaxonomyCache.get(url));
+                        logger.debug("Returning cached response for ENA taxonomy request: " + url);
+                    } else {
+                        taxonomyPromise = axios({method: "GET", url: url, responseType: 'json'});
+                    }
+
+                    taxonomyPromise
                         .then((response) => {
                             if (response.status === 200 && response.data) {
+                                // store raw response for reuse
+                                enaTaxonomyCache.set(url, response);
                                 let numFound = response.data.length;
 
                                 if (numFound === 1 && response.data[0]["taxId"] && response.data[0]["submittable"] === "true") {
@@ -72,9 +83,9 @@ class IsValidTaxonomy {
 
                         })
                         .catch((error) => {
-                            logger.error(`Failed to resolve taxonomy. [${error.response.data.errorMessage}]`);
+                            logger.error(`Failed to resolve taxonomy. [${error.response && error.response.data && error.response.data.errorMessage ? error.response.data.errorMessage : error}]`);
                             errors.push(new CustomAjvError(
-                                "isValidTaxonomy", "Something went wrong while validating term, try again." + error.response.data.errorMessage,
+                                "isValidTaxonomy", "Something went wrong while validating term, try again." + (error.response && error.response.data && error.response.data.errorMessage ? error.response.data.errorMessage : ''),
                                 {keyword: "isValidTaxonomy"})
                             );
                         })
@@ -90,8 +101,7 @@ class IsValidTaxonomy {
                 }
             });
 
-        };
-    }
+        };    }
 }
 
 module.exports = IsValidTaxonomy;

@@ -1,15 +1,29 @@
 class ValidationError {
   constructor(errorObject) {
-    if(errorObject.params.missingProperty) {
-      this.dataPath = errorObject.instancePath + "/" + errorObject.params.missingProperty;
+    // Determine property name from known AJV params keys (missingProperty, additionalProperty, unevaluatedProperty)
+    const propName = errorObject.params && (
+      errorObject.params.missingProperty ||
+      errorObject.params.additionalProperty ||
+      errorObject.params.unevaluatedProperty ||
+      errorObject.params.propertyName ||
+      null
+    );
+
+    if (propName) {
+      this.dataPath = (errorObject.instancePath || "") + "/" + propName;
     } else {
-      this.dataPath = errorObject.instancePath;
+      this.dataPath = errorObject.instancePath || "";
     }
 
-    if(errorObject.params.allowedValues) { // enum case
-      this.errors = [errorObject.message + ": " + JSON.stringify(errorObject.params.allowedValues)];
+    const baseMsg = errorObject.message || "";
+
+    if (errorObject.params && errorObject.params.allowedValues) { // enum case
+      this.errors = [baseMsg + ": " + JSON.stringify(errorObject.params.allowedValues)];
+    } else if (propName) {
+      // Make the message more helpful by including the property name
+      this.errors = [baseMsg + `: '${propName}'`];
     } else {
-      this.errors = [errorObject.message];
+      this.errors = [baseMsg];
     }
   }
 }

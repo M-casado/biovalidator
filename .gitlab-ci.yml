@@ -9,6 +9,7 @@ variables:
 stages:
   - build
   - deploy
+  - test
 
 build_docker_image:
   image: docker:latest
@@ -23,40 +24,50 @@ build_docker_image:
   after_script:
     - docker logout ${CI_REGISTRY}
 
-deploy_dev:
+deploy_int:
   variables:
-    NAMESPACE: biosamples-dev
     HOST: wwwint.ebi.ac.uk
   environment:
-    name: dev
+    name: primary_hl_int
     url: https://wwwint.ebi.ac.uk/biosamples/biovalidator
   when: manual
   extends: .kube_deploy_script
 
-deploy_test:
+deploy_dev_primary:
   variables:
-    NAMESPACE: biosamples-test
     HOST: wwwdev.ebi.ac.uk
   environment:
-    name: test
+    name: primary_hl_dev
     url: https://wwwdev.ebi.ac.uk/biosamples/biovalidator
-  only:
-    - main
-    - dev
   when: manual
   extends: .kube_deploy_script
 
-deploy_prod:
+deploy_dev_fallback:
   variables:
-    NAMESPACE: biosamples-prod
-    HOST: www.ebi.ac.uk
+    HOST: wwwdev.ebi.ac.uk
   environment:
-    name: prod
-    url: https://www.ebi.ac.uk/biosamples/biovalidator
-  only:
-    - main
+    name: fallback_hx_dev
+    url: https://wwwdev.ebi.ac.uk/biosamples/biovalidator
   when: manual
   extends: .kube_deploy_script
+
+deploy_prod_primary:
+  variables:
+    HOST: www.ebi.ac.uk
+  environment:
+    name: primary_hl_prod
+    url: https://www.ebi.ac.uk/biosamples/biovalidator
+  when: manual
+  extends: .kube_deploy_script
+
+deploy_prod_fallback:
+    variables:
+      HOST: www.ebi.ac.uk
+    environment:
+      name: fallback_hx_prod
+      url: https://www.ebi.ac.uk/biosamples/biovalidator
+    when: manual
+    extends: .kube_deploy_script
 
 # todo discuss: do we need AIT biovalidator to share with others?
 # todo discuss: what are the options to make biosamples internal only: remove ingress and make service=ClusterIP?
@@ -72,15 +83,24 @@ deploy_prod:
 
 .kube_deploy_script:
   stage: deploy
-  image: dtzar/helm-kubectl
+  image: ${CI_REGISTRY_IMAGE}/helm-kubectl:3.16
   script:
-    - kubectl create namespace $NAMESPACE || true
-    - kubectl config set-context --current --namespace=${NAMESPACE}
+    - kubectl create namespace ${K8S_NAMESPACE} || true
+    - echo ${K8S_NAMESPACE}
+    - kubectl config set-context --current --namespace=${K8S_NAMESPACE}
     - kubectl delete secret $DOCKER_PULL_SECRET || true
     - kubectl create secret docker-registry $DOCKER_PULL_SECRET --docker-server=$CI_REGISTRY --docker-username=$CI_DEPLOY_USER --docker-password=$CI_DEPLOY_PASSWORD
     - envsubst < deployment.yaml > kubernetes.yaml
     - kubectl apply -f kubernetes.yaml
-    - envsubst < ingress_template.yaml > ingress.yaml
-    - cat ingress.yaml
-    - kubectl apply -f ingress.yaml
     - kubectl rollout restart deployments biovalidator
+
+
+trigger_api_tests:
+  stage: test
+  when: manual
+  trigger:
+    project: FAIRification/biosamples-api-tests
+  variables:
+    BSD_ENV: "wwwint"
+    FOLDER: "biovalidator"
+    TRIGGER_SERVICE: "true"
