@@ -3,12 +3,14 @@ const bodyParser = require("body-parser");
 const {logger, addLogDirectory} = require("../utils/winston");
 const AppError = require("../model/application-error");
 const BioValidator = require("./biovalidator-core")
+const {FegaExamplesClient} = require("../utils/fega_examples_client");
 const npid = require("npid");
 const path = require("path");
 
 class BioValidatorServer {
   constructor(port, localSchemaPath) {
     this.biovalidator = new BioValidator(localSchemaPath)
+    this.fegaExamplesClient = new FegaExamplesClient();
     this.port = port || process.env.BIOVALIDATOR_PORT || 3020;
     this.baseUrl = process.env.BIOVALIDATOR_BASE_URL || '/';
     this.logPath = process.env.BIOVALIDATOR_LOG_DIR || './logs';
@@ -91,13 +93,35 @@ class BioValidatorServer {
 
     this.router.get("/validate", (req, res) => {
       res.send({
-        message: "ELIXIR biovalidator: Please use POST method to validate data against schema. See  Example POST " +
-            "message structure 'example_post_body'. For more information and examples on how to use the validator " +
-            "see https://github.com/elixir-europe/biovalidator",
+        message: "EGA Biovalidator endpoint: Please use POST method to validate FEGA/EGA metadata JSON against " +
+            "a JSON Schema. See Example POST message structure 'example_post_body'. For more information about " +
+            "Biovalidator see https://github.com/elixir-europe/biovalidator and for FEGA schemas see " +
+            "https://github.com/M-casado/fega-metadata-schema",
         example_post_body: {
-          schema: {},
-          data: {}
+          schema: {
+            "$ref": "https://raw.githubusercontent.com/M-casado/fega-metadata-schema/main/schemas/entities/cohort/schema.json"
+          },
+          data: {
+            "@context": "https://raw.githubusercontent.com/M-casado/fega-metadata-schema/main/schemas/entities/cohort/schema.json",
+            "@type": "ega:cohort",
+            "id": "ega:EGAH00000000001",
+            "name": "Barcelona adult genomics cohort",
+            "cohortType": "study-defined"
+          }
         }
+      });
+    });
+
+    this.router.get("/examples", (req, res) => {
+      if (req.query.refresh === "true") {
+        this.fegaExamplesClient.clearCache();
+      }
+      this.fegaExamplesClient.getExamples().then((examples) => {
+        res.status(200).send(examples);
+      }).catch((error) => {
+        const appError = new AppError("Failed to load FEGA examples. " + (error.message || error));
+        logger.error(appError.error);
+        res.status(502).send(appError);
       });
     });
 
@@ -159,8 +183,6 @@ class BioValidatorServer {
 }
 
 module.exports = BioValidatorServer;
-
-
 
 
 

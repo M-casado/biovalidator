@@ -17,7 +17,7 @@
     <meta content="width" name="MobileOptimized" />
     <meta content="1" name="HandheldFriendly" />
     <meta content="yes" name="apple-mobile-web-app-capable" />
-    <title>Bio-validator</title>
+    <title>EGA Biovalidator endpoint</title>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-wEmeIV1mKuiNpC+IOBjI7aAzPcEZeedi5yW5f2yOq55WWLwNGmvvx4Um1vskeMj0" crossorigin="anonymous">
@@ -28,21 +28,58 @@
         .container {
             max-width: 960px;
         }
+        .brand-logo {
+            width: 72px;
+            height: 72px;
+            object-fit: contain;
+            margin-bottom: 1rem;
+        }
+        .field-heading {
+            font-size: 0.85rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #364152;
+            margin-bottom: 0.5rem;
+        }
+        .result-panel {
+            min-height: 160px;
+        }
+        .docs-panel {
+            border-top: 1px solid #dee2e6;
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+        }
+        .docs-panel h2 {
+            font-size: 1.1rem;
+            margin-bottom: 0.75rem;
+        }
+        .docs-panel p {
+            margin-bottom: 0.75rem;
+        }
     </style>
 </head>
 
 <body class="bg-light">
     <div class="container-fluid">
             <div class="py-5 text-center">
-                <h1>ELIXIR biovalidator</h1>
+                <img class="brand-logo" src="https://avatars.githubusercontent.com/u/20772902?s=280&amp;v=4" alt="EGA logo">
+                <h1>EGA Biovalidator endpoint</h1>
                 <p class="lead">
-                    ElIXIR biovalidator is an extended JSON Schema validator supporting use cases related to life sciences.
-                    The biovalidator is based on popular JavaScript library AJV.
+                    Validate FEGA/EGA metadata JSON against JSON Schema using Biovalidator.
+                    Minimal valid examples can be fetched from the FEGA metadata schema repository on demand.
                 </p>
             </div>
-            <div class="mb-3 d-flex justify-content-center">
-                <button class="btn btn-outline-secondary mx-1 w-25" id="load">Load sample data</button>
-                <button class="btn btn-primary mx-1 w-25" type="submit" id="validate">Validate</button>
+            <div class="mb-3">
+                <div class="input-group">
+                    <select class="form-select" id="example-select" aria-label="FEGA minimal valid example">
+                        <option value="">Fetch examples to populate this list</option>
+                    </select>
+                    <button class="btn btn-outline-secondary" id="fetch-examples">Fetch examples</button>
+                    <button class="btn btn-outline-secondary" id="load-example">Load example</button>
+                    <button class="btn btn-primary" type="submit" id="validate">Validate</button>
+                </div>
+                <div class="form-text" id="examples-message"></div>
             </div>
 
 
@@ -50,7 +87,7 @@
 
                     <div class="row">
                     <div class="col-lg-6">
-                        <label class="form-label" for="input">Schema:</label>
+                        <label class="field-heading" for="input">Schema</label>
                         <textarea class="form-control" id="input" name="input"
                                   placeholder="Enter your JSON schema or a URL to your schema here..." rows="12"
                                   required></textarea>
@@ -59,7 +96,7 @@
                         </div>
                     </div>
                     <div class="col-lg-6">
-                        <label class="form-label" for="input2">Data:</label>
+                        <label class="field-heading" for="input2">Data</label>
                         <div class="input-group has-validation"></div>
                         <textarea class="form-control" id="input2" name="input2"
                                   placeholder="Enter JSON instance to validate against the schema..." rows="12"
@@ -73,8 +110,8 @@
 
             <div class="row">
                 <div class="col-lg-12">
-                    <label class="form-label">Validation results:</label>
-                    <div class="card">
+                    <div class="field-heading">Validation results</div>
+                    <div class="card result-panel">
                         <div class="card-body">
                             <span id="failed" style="display: none;color : red;">INVALID</span>
                             <span id="valid" style="display: none;color : green;">VALID</span>
@@ -83,6 +120,25 @@
                     </div>
                 </div>
             </div>
+            <section class="docs-panel">
+                <h2>About this endpoint</h2>
+                <p>
+                    This service uses Biovalidator to validate FEGA/EGA metadata JSON against JSON Schema.
+                    Paste a schema and a JSON document, or fetch the current minimal valid examples from the
+                    FEGA metadata schema repository and load one into the editor.
+                </p>
+                <p>
+                    The fetched examples are request wrappers with top-level <code>schema</code> and <code>data</code>
+                    fields. The schema commonly points to the FEGA schema repository with <code>$ref</code>, while the
+                    data field contains the JSON metadata instance that will be validated.
+                </p>
+                <p>
+                    More information is available in the
+                    <a href="https://github.com/elixir-europe/biovalidator" target="_blank" rel="noopener">Biovalidator repository</a>,
+                    the <a href="https://github.com/M-casado/fega-metadata-schema" target="_blank" rel="noopener">FEGA metadata schema repository</a>,
+                    and the <a href="https://github.com/M-casado/fega-metadata-schema/blob/main/docs/FEGA-metadata-technical-report.md" target="_blank" rel="noopener">FEGA metadata technical report</a>.
+                </p>
+            </section>
 
         <footer class="my-5 text-muted text-center text-small">
             <p class="mb-1">Apache License 2.0</p>
@@ -115,54 +171,91 @@
     $(document).ready(function () {
 
         $("#results").val("")
+        $("#example-select").prop("disabled", true);
+        $("#load-example").prop("disabled", true);
+        setExamplesMessage("Fetch FEGA examples when you want to load or refresh the list.", false);
 
-        $("#load").click(function (evt) {
-            evt.preventDefault();
-            let schema = {
-                "$schema": "http://json-schema.org/draft-07/schema#",
-                "type": "object",
-                "properties": {
-                    "alias": {
-                        "description": "A sample unique identifier in a submission.",
-                        "type": "string"
-                    },
-                    "taxonId": {
-                        "description": "The taxonomy id for the sample species.",
-                        "type": "integer"
-                    },
-                    "taxon": {
-                        "description": "The taxonomy name for the sample species.",
-                        "type": "string"
-                    },
-                    "releaseDate": {
-                        "description": "Date from which this sample is released publicly.",
-                        "type": "string",
-                        "format": "date"
-                    },
-                    "disease": {
-                        "description": "The disease for the sample species.",
-                        "type": "string"
-                    },
-                    "disease_id": {
-                        "description": "The ontology id for the disease sample species.",
-                        "type": "string",
-                        "graphRestriction": {
-                            "ontologies": ["obo:mondo", "obo:efo"],
-                            "classes": ["MONDO:0000001", "PATO:0000461"],
-                            "includeSelf": true
-                        }
-                    }
+        let fegaExamples = [];
+
+        function setExamplesMessage(message, isError) {
+            $("#examples-message")
+                .text(message || "")
+                .toggleClass("text-danger", Boolean(isError))
+                .toggleClass("text-muted", !isError);
+        }
+
+        function populateExamples(payload) {
+            fegaExamples = payload.examples || [];
+            const select = $("#example-select");
+            select.empty();
+
+            if (fegaExamples.length === 0) {
+                select.append($("<option>").val("").text("No FEGA examples available"));
+                select.prop("disabled", true);
+                $("#load-example").prop("disabled", true);
+                setExamplesMessage("No minimal valid FEGA examples were returned.", true);
+                return;
+            }
+
+            fegaExamples.forEach(function (example) {
+                select.append(
+                    $("<option>")
+                        .val(example.id)
+                        .text(example.entity + ": " + example.name)
+                );
+            });
+            select.prop("disabled", false);
+            $("#load-example").prop("disabled", false);
+            setExamplesMessage("Loaded " + fegaExamples.length + " minimal valid FEGA examples.", false);
+        }
+
+        function loadSelectedExample() {
+            const selectedId = $("#example-select").val();
+            const selectedExample = fegaExamples.find(function (example) {
+                return example.id === selectedId;
+            });
+            if (!selectedExample) {
+                setExamplesMessage("Select a FEGA example to load.", true);
+                return;
+            }
+
+            $("#input").val(JSON.stringify(selectedExample.schema, null, 2));
+            $("#input2").val(JSON.stringify(selectedExample.data, null, 2));
+            setExamplesMessage("Loaded " + selectedExample.name + ".", false);
+        }
+
+        function loadFegaExamples() {
+            $("#example-select").prop("disabled", true);
+            $("#load-example").prop("disabled", true);
+            $("#fetch-examples").prop("disabled", true).text("Fetching...");
+            setExamplesMessage("Loading FEGA examples...", false);
+
+            $.ajax({
+                type: "GET",
+                url: "examples?refresh=true",
+                success: function (response) {
+                    populateExamples(response);
+                    $("#fetch-examples").text("Refresh examples");
                 },
-                "required": ["alias", "taxonId"]
-            };
-            let data = {
-                "alias": "MA456",
-                "taxonId": 9606,
-                "disease": "glioblastoma",
-                "disease_id": "MONDO:0018177"
-            };
-            $("#input").val(JSON.stringify(schema, null, 2));
-            $("#input2").val(JSON.stringify(data, null, 2));
+                error: function () {
+                    $("#example-select").empty()
+                        .append($("<option>").val("").text("FEGA examples unavailable"));
+                    setExamplesMessage("Unable to load FEGA examples from this endpoint.", true);
+                },
+                complete: function () {
+                    $("#fetch-examples").prop("disabled", false);
+                }
+            });
+        }
+
+        $("#fetch-examples").click(function (evt) {
+            evt.preventDefault();
+            loadFegaExamples();
+        });
+
+        $("#load-example").click(function (evt) {
+            evt.preventDefault();
+            loadSelectedExample();
         });
 
         $("#validate").click(function (event) {
