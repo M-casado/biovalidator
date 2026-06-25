@@ -44,7 +44,7 @@ class BioValidatorServer {
 
     this.app = express();
     this.router = express.Router();
-    this.router.use(express.static('src/views'));
+    this.router.use(express.static(path.join(__dirname, "..", "views")));
 
     this.app.use(express.json({limit:'1mb'}));
 
@@ -183,6 +183,5 @@ class BioValidatorServer {
 }
 
 module.exports = BioValidatorServer;
-
 
 

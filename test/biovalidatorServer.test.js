@@ -37,6 +37,23 @@ describe('biovalidator server endpoints', () => {
     expect(res.text).toContain('FEGA metadata technical report');
   });
 
+  it('GET / should serve bundled UI when started from another working directory', async () => {
+    const originalCwd = process.cwd();
+    try {
+      process.chdir('/tmp');
+      const cwdServer = new BioValidatorServer("3021", "");
+      cwdServer._configureServer()._configureEndpoints();
+      const res = await supertest(cwdServer.app).get('/');
+
+      expect(res.status).toEqual(200);
+      expect(res.type).toEqual(expect.stringContaining('html'));
+      expect(res.text).toContain('EGA Biovalidator endpoint');
+      expect(res.text).toContain('id="fetch-examples"');
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
   it('GET /validate should describe the EGA endpoint request shape', async () => {
     const res = await requestWithSupertest.get('/validate');
     expect(res.status).toEqual(200);
