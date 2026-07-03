@@ -1,10 +1,19 @@
 jest.mock("axios");
 
 const fs = require("fs");
+const {EventEmitter} = require("events");
+const childProcess = require("child_process");
 const npid = require("npid");
 const axios = require("axios");
+const {
+  olsCache,
+  enaTaxonomyCache,
+  identifiersCache,
+  clearApiCaches
+} = require('../src/keywords/shared-cache');
 
 const BioValidatorServer = require('../src/core/server');
+const {resolveDeploymentMetadata} = BioValidatorServer;
 const supertest = require('supertest');
 const server = new BioValidatorServer("3020", "");
 server._configureServer()._configureEndpoints();
@@ -191,15 +200,37 @@ describe('biovalidator server endpoints', () => {
     });
   });
 
-  it('GET /cache should initially return empty cache', async () => {
+  it('GET /cache returns the schema inventory and API cache details', async () => {
+    clearApiCaches();
+    server.biovalidator.clearSchemaCaches();
+    olsCache.set('private-ols-key', {data: {}});
+    enaTaxonomyCache.set('private-ena-key', {data: {}});
+    identifiersCache.set('private-identifier-key', {data: {}});
+
     const res = await requestWithSupertest.get('/cache');
     expect(res.status).toEqual(200);
     expect(res.type).toEqual(expect.stringContaining('json'));
-    expect(res.body).toHaveProperty('cachedSchema');
-    expect(res.body).toEqual({"cachedSchema": [], "referencedSchema": []})
+    expect(res.body.schemas).toEqual({registered: [], validatorID: [], referenced: []});
+    expect(res.body.api.entries).toEqual({
+      total: 3,
+      ols: 1,
+      ena_taxonomy: 1,
+      identifiers_org: 1
+    });
+    expect(JSON.stringify(res.body)).not.toContain('private-ols-key');
+    expect(JSON.stringify(res.body)).not.toContain('private-ena-key');
+    expect(JSON.stringify(res.body)).not.toContain('private-identifier-key');
+    for (const provider of Object.values(res.body.api.providers)) {
+      expect(provider).toEqual(expect.objectContaining({
+        ttl_seconds: 21600,
+        entries: 1,
+        last_updated_at: expect.any(String)
+      }));
+    }
+    clearApiCaches();
   });
 
-  it('GET /cache contains object after one hit', async () => {
+  it('GET /cache reports a compiled top-level validator after validation', async () => {
 
     let inputSchema = JSON.parse(fs.readFileSync("examples/schemas/biosamples-schema.json", "utf-8"));
     let inputData = JSON.parse(fs.readFileSync("examples/objects/faang-organism-sample.json", "utf-8"));
@@ -218,19 +249,246 @@ describe('biovalidator server endpoints', () => {
     res = await requestWithSupertest.get('/cache');
     expect(res.status).toEqual(200);
     expect(res.type).toEqual(expect.stringContaining('json'));
-    expect(res.body).toHaveProperty('cachedSchema');
-    expect(res.body).toEqual({"cachedSchema": ["test/biosamples/schema"], "referencedSchema": []})
+    expect(res.body.schemas).toEqual({
+      registered: [],
+      validatorID: ['test/biosamples/schema'],
+      referenced: []
+    });
   });
 
-  it('GET /cache should be empty after cache clear', async () => {
+  it('GET /cache reports empty transient schema caches after clearing', async () => {
     let res = await requestWithSupertest.delete('/cache');
     expect(res.status).toEqual(200);
 
     res = await requestWithSupertest.get('/cache');
     expect(res.status).toEqual(200);
     expect(res.type).toEqual(expect.stringContaining('json'));
-    expect(res.body).toHaveProperty('cachedSchema');
-    expect(res.body).toEqual({"cachedSchema": [], "referencedSchema": []})
+    expect(res.body.schemas).toEqual({registered: [], validatorID: [], referenced: []});
+  });
+
+  it('GET /health returns process, deployment, validation, and cache metrics', async () => {
+    const originalDeployedAt = process.env.BIOVALIDATOR_DEPLOYED_AT;
+    const originalRevision = process.env.BIOVALIDATOR_REVISION;
+    process.env.BIOVALIDATOR_DEPLOYED_AT = '2026-07-03T12:00:00Z';
+    process.env.BIOVALIDATOR_REVISION = 'abc123';
+    const healthServer = new BioValidatorServer("3022", "");
+    healthServer._configureServer()._configureEndpoints();
+    const healthRequest = supertest(healthServer.app);
+
+    clearApiCaches();
+    healthServer.biovalidator.clearSchemaCaches();
+    healthServer.biovalidator.ajvContexts['2019'].validatorCache.set('health-compiled', Promise.resolve(() => true));
+    healthServer.biovalidator.ajvContexts['2020'].referencedSchemaCache.set('health-referenced', {});
+    olsCache.set('health-ols', {data: {}});
+    enaTaxonomyCache.set('health-ena', {data: {}});
+    identifiersCache.set('health-identifiers', {data: {}});
+    try {
+      const res = await healthRequest.get('/health');
+
+      expect(res.status).toEqual(200);
+      expect(res.body).toMatchObject({
+        status: 'ok',
+        version: '2.2.2',
+        deployed_at: '2026-07-03T12:00:00Z',
+        revision: 'abc123',
+        validation: {
+          requests: {total: 0, successful: 0, failed: 0, in_flight: 0},
+          results: {valid: 0, invalid: 0}
+        },
+        cache: {
+          schemas: {
+            ttl_seconds: 21600,
+            entries: {total: 2, compiled: 1, referenced: 1}
+          },
+          api: {
+            entries: {total: 3, ols: 1, ena_taxonomy: 1, identifiers_org: 1}
+          }
+        }
+      });
+      expect(Number.isFinite(res.body.uptime_seconds)).toBe(true);
+      expect(new Date(res.body.timestamp).toISOString()).toBe(res.body.timestamp);
+      expect(new Date(res.body.process_started_at).toISOString()).toBe(res.body.process_started_at);
+
+      for (const cache of [
+        res.body.cache.schemas,
+        ...Object.values(res.body.cache.api.providers)
+      ]) {
+        expect(cache).toEqual(expect.objectContaining({
+          last_updated_at: expect.any(String),
+          last_cleared_at: expect.any(String),
+          oldest_entry_at: expect.any(String),
+          newest_entry_at: expect.any(String),
+          next_expiration_at: expect.any(String)
+        }));
+      }
+    } finally {
+      if (originalDeployedAt === undefined) delete process.env.BIOVALIDATOR_DEPLOYED_AT;
+      else process.env.BIOVALIDATOR_DEPLOYED_AT = originalDeployedAt;
+      if (originalRevision === undefined) delete process.env.BIOVALIDATOR_REVISION;
+      else process.env.BIOVALIDATOR_REVISION = originalRevision;
+      clearApiCaches();
+      healthServer.biovalidator.clearSchemaCaches();
+    }
+  });
+
+  it('GET /health falls back to process startup and the local Git revision', async () => {
+    const originalDeployedAt = process.env.BIOVALIDATOR_DEPLOYED_AT;
+    const originalRevision = process.env.BIOVALIDATOR_REVISION;
+    delete process.env.BIOVALIDATOR_DEPLOYED_AT;
+    delete process.env.BIOVALIDATOR_REVISION;
+
+    try {
+      const localServer = new BioValidatorServer("3027", "");
+      localServer._configureServer()._configureEndpoints();
+      const res = await supertest(localServer.app).get('/health');
+      expect(res.status).toEqual(200);
+      expect(res.body.deployed_at).toBe(res.body.process_started_at);
+      const currentRevision = childProcess.execFileSync('git', ['rev-parse', 'HEAD'], {
+        encoding: 'utf8'
+      }).trim();
+      expect(res.body.revision).toBe(currentRevision);
+    } finally {
+      if (originalDeployedAt !== undefined) process.env.BIOVALIDATOR_DEPLOYED_AT = originalDeployedAt;
+      if (originalRevision !== undefined) process.env.BIOVALIDATOR_REVISION = originalRevision;
+    }
+  });
+
+  it('deployment metadata tolerates an installation without Git metadata', () => {
+    const processStartedAt = '2026-07-03T12:00:00.000Z';
+
+    expect(resolveDeploymentMetadata(processStartedAt, {}, '/path/that/does/not/exist')).toEqual({
+      deployedAt: processStartedAt,
+      revision: null
+    });
+  });
+
+  it('tracks successful valid/invalid validations and malformed or failed requests separately', async () => {
+    const metricsServer = new BioValidatorServer("3023", "");
+    metricsServer._configureServer()._configureEndpoints();
+    const metricsRequest = supertest(metricsServer.app);
+
+    await metricsRequest.post('/validate').send({
+      schema: {$id: 'health-valid', type: 'object'},
+      data: {}
+    }).expect(200);
+    await metricsRequest.post('/validate').send({
+      schema: {$id: 'health-invalid', type: 'object', required: ['name']},
+      data: {}
+    }).expect(200);
+    await metricsRequest.post('/validate')
+        .set('Content-Type', 'application/json')
+        .send('{"schema":')
+        .expect(400);
+
+    metricsServer.biovalidator.validate = jest.fn().mockRejectedValue(new Error('validation failed'));
+    await metricsRequest.post('/validate').send({schema: {type: 'object'}, data: {}}).expect(500);
+
+    const health = await metricsRequest.get('/health');
+    expect(health.body.validation).toEqual({
+      requests: {total: 4, successful: 2, failed: 2, in_flight: 0},
+      results: {valid: 1, invalid: 1}
+    });
+  });
+
+  it('reports an active validation as in flight until it completes', async () => {
+    const metricsServer = new BioValidatorServer("3024", "");
+    metricsServer._configureServer()._configureEndpoints();
+    const metricsRequest = supertest(metricsServer.app);
+    let resolveValidation;
+    metricsServer.biovalidator.validate = jest.fn(() => new Promise((resolve) => {
+      resolveValidation = resolve;
+    }));
+
+    const pendingValidation = metricsRequest.post('/validate')
+        .send({schema: {type: 'object'}, data: {}})
+        .then((response) => response);
+    while (!resolveValidation) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const during = await metricsRequest.get('/health');
+    expect(during.body.validation.requests).toEqual({
+      total: 1,
+      successful: 0,
+      failed: 0,
+      in_flight: 1
+    });
+
+    resolveValidation([]);
+    await pendingValidation;
+    const after = await metricsRequest.get('/health');
+    expect(after.body.validation).toEqual({
+      requests: {total: 1, successful: 1, failed: 0, in_flight: 0},
+      results: {valid: 1, invalid: 0}
+    });
+  });
+
+  it('counts an aborted validation request as failed exactly once', () => {
+    const metricsServer = new BioValidatorServer("3025", "");
+    const response = new EventEmitter();
+    response.statusCode = 200;
+    response.writableEnded = false;
+    response.locals = {};
+
+    metricsServer._trackValidationRequest(
+        {method: 'POST', path: '/validate'},
+        response,
+        jest.fn()
+    );
+    response.emit('close');
+    response.emit('finish');
+
+    expect(metricsServer.validationMetrics).toEqual({
+      requests: {total: 1, successful: 0, failed: 1, in_flight: 0},
+      results: {valid: 0, invalid: 0}
+    });
+  });
+
+  it('DELETE /cache supports isolated api and schema scopes, all, and invalid scopes', async () => {
+    const scopedServer = new BioValidatorServer("3026", "test/resources/schema_registry/valid");
+    scopedServer._configureServer()._configureEndpoints();
+    const scopedRequest = supertest(scopedServer.app);
+    const schemaCache = scopedServer.biovalidator.ajvContexts['2019'].validatorCache;
+
+    clearApiCaches();
+    schemaCache.set('scope-schema', Promise.resolve(() => true));
+    olsCache.set('scope-api', {data: {}});
+
+    let res = await scopedRequest.delete('/cache?scope=api');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({message: 'Cache cleared successfully', scope: 'api', cleared: ['api']});
+    expect(schemaCache.has('scope-schema')).toBe(true);
+    expect(olsCache.keys()).toEqual([]);
+
+    olsCache.set('scope-api', {data: {}});
+    res = await scopedRequest.delete('/cache?scope=schemas');
+    expect(res.body).toEqual({message: 'Cache cleared successfully', scope: 'schemas', cleared: ['schemas']});
+    expect(schemaCache.keys()).toEqual([]);
+    expect(olsCache.has('scope-api')).toBe(true);
+    expect(scopedServer.biovalidator.getSchemaInventory().registered).toEqual([
+      'https://example.org/local/draft2019.json',
+      'https://example.org/local/draft2020.json'
+    ]);
+
+    schemaCache.set('scope-schema', Promise.resolve(() => true));
+    res = await scopedRequest.delete('/cache');
+    expect(res.body).toEqual({message: 'Cache cleared successfully', scope: 'all', cleared: ['schemas', 'api']});
+    expect(schemaCache.keys()).toEqual([]);
+    expect(olsCache.keys()).toEqual([]);
+
+    schemaCache.set('scope-schema', Promise.resolve(() => true));
+    olsCache.set('scope-api', {data: {}});
+    res = await scopedRequest.delete('/cache?scope=unknown');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({error: 'Invalid cache scope. Expected one of: all, schemas, api.'});
+    expect(schemaCache.has('scope-schema')).toBe(true);
+    expect(olsCache.has('scope-api')).toBe(true);
+
+    res = await scopedRequest.delete('/cache?scope=');
+    expect(res.status).toBe(400);
+
+    clearApiCaches();
+    scopedServer.biovalidator.clearSchemaCaches();
   });
 
 });

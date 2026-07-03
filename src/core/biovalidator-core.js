@@ -1,6 +1,8 @@
 const Ajv = require("ajv").default;
 const Ajv2019 = require("ajv/dist/2019");
 const Ajv2020 = require("ajv/dist/2020");
+const draft06MetaSchema = require("ajv/dist/refs/json-schema-draft-06.json");
+const draft07MetaSchema = require("ajv/dist/refs/json-schema-draft-07.json");
 const addFormats = require("ajv-formats");
 const axios = require('axios');
 const AppError = require("../model/application-error");
@@ -12,6 +14,11 @@ const ValidationError = require("../model/validation-error");
 const {logger} = require("../utils/winston");
 const NodeCache = require("node-cache");
 const constants = require("../utils/constants");
+const {CacheMetrics, aggregateCacheSnapshots} = require("../utils/cache-metrics");
+const {
+    CACHE_TTL_SECONDS,
+    CACHE_CHECK_PERIOD_SECONDS
+} = require("../utils/cache-config");
 
 const customKeywordValidators = [
     new isChildTermOf(null, constants.OLS_SEARCH_URL),
@@ -58,32 +65,83 @@ class BioValidator {
         });
     }
 
-    // Returns legacy merged cache shape for backward compatibility:
-    // { cachedSchema: [...], referencedSchema: [...] }
-    getCachedSchema() {
-        const merged = {
-            cachedSchema: [],
-            referencedSchema: []
-        };
-        for (const k of Object.keys(this.ajvContexts)) {
-            merged.cachedSchema = merged.cachedSchema.concat(this.ajvContexts[k].validatorCache.keys());
-            merged.referencedSchema = merged.referencedSchema.concat(this.ajvContexts[k].referencedSchemaCache.keys());
+    /**
+     * Inventory schema configuration and transient caches across AJV contexts.
+     * Registered schemas come from --ref and persist for the server lifetime;
+     * validator IDs and referenced schemas are expiring runtime caches.
+     */
+    getSchemaInventory() {
+        const registered = [];
+        const validatorIDs = [];
+        const referenced = [];
+
+        for (const context of Object.values(this.ajvContexts)) {
+            registered.push(...context.registeredSchemas.keys());
+            validatorIDs.push(...context.validatorCache.keys());
+            referenced.push(...context.referencedSchemaCache.keys());
         }
-        // De-dup entries while keeping order
-        merged.cachedSchema = [...new Set(merged.cachedSchema)];
-        merged.referencedSchema = [...new Set(merged.referencedSchema)];
-        return merged;
+
+        return {
+            registered: [...new Set(registered)].sort(),
+            validatorID: [...new Set(validatorIDs)].sort(),
+            referenced: [...new Set(referenced)].sort()
+        };
     }
 
-    clearCachedSchema() {
-        logger.info("Clearing all cached schemas and removing AJV instance schemas.");
-        for (const k of Object.keys(this.ajvContexts)) {
-            try {
-                this.ajvContexts[k].ajv.removeSchema();
-            } catch (e) { /* ignore */ }
-            this.ajvContexts[k].validatorCache.flushAll();
-            this.ajvContexts[k].referencedSchemaCache.flushAll();
+    /**
+     * Clear transient schema caches without removing --ref registrations.
+     */
+    clearSchemaCaches() {
+        logger.info("Clearing compiled validator and remote reference caches.");
+        for (const context of Object.values(this.ajvContexts)) {
+            const transientSchemaIds = [
+                ...context.validatorCache.keys(),
+                ...context.referencedSchemaCache.keys()
+            ];
+            for (const schemaId of transientSchemaIds) {
+                try {
+                    context.ajv.removeSchema(schemaId);
+                } catch (error) {
+                    logger.warn(`Failed to remove transient schema '${schemaId}' from AJV context ${context.type}: ${error.message || error}`);
+                }
+            }
+            context.validatorCache.flushAll();
+            context.referencedSchemaCache.flushAll();
         }
+    }
+
+    /**
+     * Summarize compiled-validator and referenced-schema caches across all AJV
+     * draft contexts. Counts include only current entries; lifecycle timestamps
+     * follow the CacheMetrics semantics documented in utils/cache-metrics.js.
+     */
+    getSchemaCacheDetails() {
+        const compiledSnapshots = [];
+        const referencedSnapshots = [];
+
+        for (const context of Object.values(this.ajvContexts)) {
+            compiledSnapshots.push(context.validatorCacheMetrics.snapshot());
+            referencedSnapshots.push(context.referencedSchemaCacheMetrics.snapshot());
+        }
+
+        const allSnapshots = compiledSnapshots.concat(referencedSnapshots);
+        const aggregate = aggregateCacheSnapshots(allSnapshots, CACHE_TTL_SECONDS);
+        const compiled = compiledSnapshots.reduce((total, snapshot) => total + snapshot.entries, 0);
+        const referenced = referencedSnapshots.reduce((total, snapshot) => total + snapshot.entries, 0);
+
+        return {
+            ttl_seconds: aggregate.ttl_seconds,
+            entries: {
+                total: compiled + referenced,
+                compiled,
+                referenced
+            },
+            last_updated_at: aggregate.last_updated_at,
+            last_cleared_at: aggregate.last_cleared_at,
+            oldest_entry_at: aggregate.oldest_entry_at,
+            newest_entry_at: aggregate.newest_entry_at,
+            next_expiration_at: aggregate.next_expiration_at
+        };
     }
 
     // AJV requires $async keyword in schemas if they use any of async custom defined keywords.
@@ -203,6 +261,10 @@ class BioValidator {
     getValidationFunction(inputSchema) {
         const ctx = this._getAjvContextForSchema(inputSchema);
         const schemaId = inputSchema['$id'];
+        if (schemaId && ctx.registeredSchemas.has(schemaId)) {
+            logger.info(`Using registered local schema (context ${ctx.type}), '$id': ${schemaId}`);
+            return ctx.ajv.compileAsync({$async: true, $ref: schemaId});
+        }
         if (schemaId && ctx.validatorCache.has(schemaId)) {
             logger.info(`Returning compiled schema from validator cache (context ${ctx.type}), '$id': ${schemaId}`);
             return Promise.resolve(ctx.validatorCache.get(schemaId));
@@ -226,13 +288,50 @@ class BioValidator {
      * Each context has its own AJV instance and separate caches to avoid cross-draft contamination.
      */ 
     _initAjvContexts(localSchemaPath) {
-        // Build a context object for each draft family
-        // Collect schema files once to avoid scanning the directory twice (performance)
-        // Ensure we pass an Array to _createAjvContext/_preCompileLocalSchemas since getFiles() returns a Set
-        const schemaFilesSet = localSchemaPath ? getFiles(localSchemaPath) : new Set();
-        const schemaFiles = Array.from(schemaFilesSet);
-        this.ajvContexts['2019'] = this._createAjvContext('2019', schemaFiles);
-        this.ajvContexts['2020'] = this._createAjvContext('2020', schemaFiles);
+        const localSchemas = this._loadLocalSchemas(localSchemaPath);
+        this.ajvContexts['2019'] = this._createAjvContext('2019', localSchemas);
+        this.ajvContexts['2020'] = this._createAjvContext('2020', localSchemas);
+    }
+
+    /**
+     * Read and validate --ref configuration once before creating AJV contexts.
+     * Every local reference needs a unique, non-empty $id so AJV can resolve it.
+     */
+    _loadLocalSchemas(localSchemaPath) {
+        if (!localSchemaPath) {
+            return [];
+        }
+
+        let schemaFiles;
+        try {
+            schemaFiles = Array.from(getFiles(localSchemaPath));
+        } catch (error) {
+            throw new Error(`Failed to resolve local reference schemas '${localSchemaPath}': ${error.message || error}`);
+        }
+
+        const seenIds = new Map();
+        return schemaFiles.map((file) => {
+            let schema;
+            try {
+                schema = readFile(file);
+            } catch (error) {
+                throw new Error(`Failed to read local reference schema '${file}': ${error.message || error}`);
+            }
+
+            if (typeof schema.$id !== "string" || schema.$id.trim() === "") {
+                throw new Error(`Local reference schema '${file}' must define a non-empty $id.`);
+            }
+            if (seenIds.has(schema.$id)) {
+                throw new Error(`Duplicate local reference schema $id '${schema.$id}' in '${seenIds.get(schema.$id)}' and '${file}'.`);
+            }
+            seenIds.set(schema.$id, file);
+
+            return {
+                file,
+                schema,
+                type: typeof schema.$schema === "string" && schema.$schema.includes("2020") ? "2020" : "2019"
+            };
+        });
     }
 
     /**
@@ -242,9 +341,11 @@ class BioValidator {
      * - referencedSchemaCache: cache for schemas loaded via $ref
      * - validatorCache: cache for compiled schema functions
      */
-    _createAjvContext(type, schemaFiles) {
-        const referencedSchemaCache = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
-        const validatorCache = new NodeCache({stdTTl: 21600, checkperiod: 3600, useClones: false});
+    _createAjvContext(type, localSchemas) {
+        const referencedSchemaCache = new NodeCache({stdTTL: CACHE_TTL_SECONDS, checkperiod: CACHE_CHECK_PERIOD_SECONDS, useClones: false});
+        const validatorCache = new NodeCache({stdTTL: CACHE_TTL_SECONDS, checkperiod: CACHE_CHECK_PERIOD_SECONDS, useClones: false});
+        const referencedSchemaCacheMetrics = new CacheMetrics(referencedSchemaCache, CACHE_TTL_SECONDS);
+        const validatorCacheMetrics = new CacheMetrics(validatorCache, CACHE_TTL_SECONDS);
 
         let AjvClass = (type === '2020') ? Ajv2020 : Ajv2019;
 
@@ -316,6 +417,11 @@ class BioValidator {
             $data: true,
         });
 
+        if (type === "2019") {
+            ajvInstance.addMetaSchema(draft06MetaSchema);
+            ajvInstance.addMetaSchema(draft07MetaSchema);
+        }
+
         addFormats(ajvInstance);
         require("ajv-errors")(ajvInstance);
 
@@ -324,10 +430,17 @@ class BioValidator {
             ajvInstance = customKeywordValidator.configure(ajvInstance);
         });
 
-        // Pre-compile local schemas into the appropriate context (only once per schemaFiles)
-        this._preCompileLocalSchemas(ajvInstance, schemaFiles, {referencedSchemaCache, type});
+        const registeredSchemas = this._registerLocalSchemas(ajvInstance, localSchemas, type);
 
-        return { ajv: ajvInstance, referencedSchemaCache, validatorCache, type };
+        return {
+            ajv: ajvInstance,
+            registeredSchemas,
+            referencedSchemaCache,
+            referencedSchemaCacheMetrics,
+            validatorCache,
+            validatorCacheMetrics,
+            type
+        };
     }
 
     /**
@@ -336,9 +449,18 @@ class BioValidator {
      */
     _getAjvContextForSchema(inputSchema) {
         // Determine which AJV context to use based on the $schema property when available
-        const schemaUri = inputSchema && inputSchema.$schema ? inputSchema.$schema : "";
-        if (typeof schemaUri === 'string' && schemaUri.includes('2020')) {
-            return this.ajvContexts['2020'];
+        const schemaUri = inputSchema && inputSchema.$schema;
+        if (typeof schemaUri === 'string') {
+            return schemaUri.includes('2020')
+                ? this.ajvContexts['2020']
+                : this.ajvContexts['2019'];
+        }
+        if (inputSchema && typeof inputSchema.$ref === 'string') {
+            const registeredContext = Object.values(this.ajvContexts)
+                .find((context) => context.registeredSchemas.has(inputSchema.$ref));
+            if (registeredContext) {
+                return registeredContext;
+            }
         }
         // default to 2019 context (handles older drafts as well)
         return this.ajvContexts['2019'];
@@ -354,29 +476,23 @@ class BioValidator {
         return ajvInstance;
     }
 
-    _preCompileLocalSchemas(ajv, schemaFiles, context) {
-        if (schemaFiles && schemaFiles.length) {
-            logger.info(`Compiling local schema from: list (count: ${schemaFiles.length}) into context: ${context.type}`);
-            for (let file of schemaFiles) {
-                let schema = readFile(file);
-                this._insertAsyncToSchemasAndDefs(schema);
-                // Determine which context the schema belongs to based on its $schema
-                const schemaType = (typeof schema.$schema === 'string' && schema.$schema.includes('2020')) ? '2020' : '2019';
-                if (schemaType === context.type) {
-                    try {
-                        ajv.getSchema(schema["$id"] || ajv.compile(schema)); // add to AJV cache if not already present
-                        context.referencedSchemaCache.set(schema["$id"], schema);
-                        logger.info("Adding compiled local schema to cache: " + schema["$id"] + " in context: " + context.type);
-                    } catch (e) {
-                        logger.error(`Failed to pre-compile local schema ${schema["$id"] || file} into context ${context.type}: ${e.message || e}`);
-                    }
-                } else {
-                    logger.debug("Skipping local schema for context " + context.type + ": " + (schema["$id"] || '(no $id)'));
-                }
+    /** Register local schemas without compiling them or placing them in TTL caches. */
+    _registerLocalSchemas(ajv, localSchemas, type) {
+        const registeredSchemas = new Map();
+        for (const localSchema of localSchemas.filter((candidate) => candidate.type === type)) {
+            this._insertAsyncToSchemasAndDefs(localSchema.schema);
+            try {
+                ajv.addSchema(localSchema.schema, localSchema.schema.$id);
+            } catch (error) {
+                throw new Error(
+                    `Failed to register local reference schema '${localSchema.file}' ` +
+                    `($id '${localSchema.schema.$id}') in context ${type}: ${error.message || error}`
+                );
             }
-        } else {
-            logger.debug(`No local schema files to pre-compile for context: ${context.type}`);
+            registeredSchemas.set(localSchema.schema.$id, localSchema.schema);
+            logger.info(`Registered local schema '$id': ${localSchema.schema.$id} in context: ${type}`);
         }
+        return registeredSchemas;
     }
 }
 

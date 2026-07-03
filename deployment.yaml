@@ -27,6 +27,10 @@ spec:
             - "--baseUrl"
             - "/biosamples/biovalidator"
           env:
+            - name: BIOVALIDATOR_DEPLOYED_AT
+              value: "$CI_JOB_STARTED_AT"
+            - name: BIOVALIDATOR_REVISION
+              value: "$CI_COMMIT_SHA"
             - name: HTTP_PROXY
               value: $HTTP_PROXY
             - name: HTTPS_PROXY

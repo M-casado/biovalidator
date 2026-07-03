@@ -14,7 +14,7 @@ const argv = yargs(hideBin(process.argv))
     .alias('p', 'port')
     .describe('schema', 'path to the schema file.')
     .describe('data', 'path to the data file.')
-    .describe('ref', 'path to referenced schema directory/file/glob pattern.')
+    .describe('ref', 'path, directory, or glob of local $ref schemas; each schema must have a unique $id.')
     .describe('port', 'exposed port in server mode. Only valid in server mode.')
     .describe('baseUrl', 'base URL for the server. Only valid in server mode.')
     .describe('pidPath', 'PID file name and path. Only valid in server mode.')
@@ -71,4 +71,3 @@ function _validateCliArgs() {
 
     return valid;
 }
-

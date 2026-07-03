@@ -1,0 +1,49 @@
+# HTTP API
+
+The default base URL is `http://localhost:3020/`. `BIOVALIDATOR_BASE_URL` may add a prefix to every path. Requests with a body use `Content-Type: application/json`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/` | Bundled browser interface. |
+| `GET` | `/validate` | Validation request example. |
+| `POST` | `/validate` | Validate `data` against `schema`. |
+| `GET` | `/examples` | FEGA examples; `refresh=true` clears the examples cache first. |
+| `GET` | `/cache` | Registered schema IDs, transient schema cache keys, and API cache metrics. |
+| `DELETE` | `/cache` | Clear `all`, `schemas`, or `api` caches using the optional `scope` query parameter. The default is `all`. |
+| `GET` | `/health` | Process-local liveness, validation counters, and cache metrics. |
+
+## Validation
+
+`POST /validate` accepts an object with required `schema` and `data` properties. A `200` response contains an empty array when the data is valid, or validation errors when it is invalid. Malformed requests return `400`; processing failures return `500`.
+
+## Cache
+
+`GET /cache` groups schema state under `schemas.registered`, `schemas.validatorID`, and `schemas.referenced`. Registered schemas come from `--ref`; `validatorID` lists cached top-level schemas by `$id`; referenced schemas were fetched remotely. The `api` object reports per-provider counts, TTL, and lifecycle timestamps without exposing cache keys.
+
+`DELETE /cache` clears transient schema and/or API caches. Registered local schemas remain available because they are server configuration rather than cache entries.
+
+## Health
+
+`GET /health` returns `200` when the process can serve the request. It does not probe OLS, ENA Taxonomy, identifiers.org, or other upstream services. Counters and cache history reset when the process restarts and are not aggregated across replicas.
+
+| Field | Meaning |
+| --- | --- |
+| `status` | Process liveness; currently `ok`. |
+| `timestamp` | UTC time at which the snapshot was generated. |
+| `version` | Biovalidator package version. |
+| `uptime_seconds`, `process_started_at` | Process lifetime and calculated UTC start time. |
+| `deployed_at` | `BIOVALIDATOR_DEPLOYED_AT`, or process start time when unset. |
+| `revision` | `BIOVALIDATOR_REVISION`, or the local Git commit; `null` when neither is available. |
+| `validation.requests` | POST `/validate` totals: all received, 2xx successes, failed/aborted requests, and requests in flight. |
+| `validation.results` | Valid and invalid outcomes among successfully processed validations. |
+| `cache.schemas.entries` | Total current schema entries, split into compiled validators and referenced schemas. |
+| `cache.api.entries` | Total current upstream response entries, split by provider. |
+| `cache.api.providers` | Per-provider cache lifecycle details. |
+| `ttl_seconds` | Configured lifetime for entries in that cache. |
+| `last_updated_at`, `last_cleared_at` | Last observed cache write and clear times; `null` before that event occurs. |
+
+The schema and validation API cache lifetime defaults to 21,600 seconds. Deployments can set `BIOVALIDATOR_CACHE_TTL_SECONDS` to a positive whole number of seconds; the effective value appears in `ttl_seconds`. Configuration is read at process startup. FEGA examples use the separate `FEGA_EXAMPLES_CACHE_TTL_SECONDS` setting.
+| `oldest_entry_at`, `newest_entry_at` | Estimated insertion boundaries for current entries; `null` when empty. |
+| `next_expiration_at` | Earliest scheduled expiration among current entries; `null` when none exists. |
+
+Implementation-level lifecycle details are documented alongside the health and cache builders in [`server.js`](../src/core/server.js), [`biovalidator-core.js`](../src/core/biovalidator-core.js), and [`cache-metrics.js`](../src/utils/cache-metrics.js).

@@ -15,7 +15,7 @@ test('Referenced schema in 2020 cache is reused when referenced from 2019 compil
     }
   };
 
-  // Simulate that the schema was precompiled into the 2020 context (as happens with -r)
+  // Simulate a remote schema previously fetched into the 2020 context.
   b.ajvContexts['2020'].referencedSchemaCache.set(uri, remoteSchema);
 
   // If network is attempted, fail the test

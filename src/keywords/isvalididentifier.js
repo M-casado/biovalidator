@@ -43,8 +43,9 @@ class IsValidIdentifier {
                     return;
                 }
 
+                const cacheHit = identifiersCache.has(identifier);
                 let responsePromise;
-                if (identifiersCache.has(identifier)) {
+                if (cacheHit) {
                     responsePromise = Promise.resolve(identifiersCache.get(identifier));
                     logger.debug("Returning cached response for identifiers.org request: " + identifier)
                 } else {
@@ -56,7 +57,10 @@ class IsValidIdentifier {
                 }
 
                 responsePromise.then((response) => {
-                    identifiersCache.set(identifier, response);
+                    if (!cacheHit && response.status === 200) {
+                        // Cache successful upstream responses, including negative resolutions.
+                        identifiersCache.set(identifier, response);
+                    }
                     if (response.status === 200 && response.data.payload.resolvedResources.length > 0) {
                         const resolvedUrl = response.data.payload.resolvedResources[0].compactIdentifierResolvedUrl;
                         logger.debug(`Returning resolved term: ${identifier} -> ${resolvedUrl}`);

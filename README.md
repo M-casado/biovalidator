@@ -30,6 +30,7 @@ The biovalidator currently supports JSON Schema draft-06/07/2019-09.
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Using biovalidator as a server](#using-biovalidator-as-a-server)
+  - [HTTP endpoints](#http-endpoints)
 - [Using biovalidator as a CLI command](#using-biovalidator-as-a-cli-command)
 - [Startup arguments](#startup-arguments)
 - [Extended keywords for ontology and taxonomy validation](#extended-keywords-for-ontology-and-taxonomy-validation)
@@ -76,6 +77,19 @@ node src/biovalidator
 
 Once the server is up and running it can be accessed in your browser at [http://localhost:3020/](http://localhost:3020/). 
 The biovalidator also exposes an endpoint for validation: [http://localhost:3020/validate](http://localhost:3020/validate). 
+
+### HTTP endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/` | Open the bundled validation interface. |
+| `GET`, `POST` | `/validate` | View a request example or validate data against a JSON Schema. |
+| `GET` | `/examples` | Retrieve FEGA validation examples. |
+| `GET`, `DELETE` | `/cache` | Inspect schema/API cache state or clear transient caches. |
+| `GET` | `/health` | Inspect process, validation, and cache health metrics. |
+
+See the concise [HTTP API reference](docs/api.md) for parameters and response semantics.
+
 The `/validate` POST endpoint accepts JSON as data and has the following structure.
 ```json
 {
@@ -162,11 +176,11 @@ export BIOVALIDATOR_LOG_DIR=./new_log_dir
 ```
 
 ### Interacting with biovalidator cache
-In server mode, biovalidator caches referenced schema to minimise network time for repeated schema lookups. 
-`/cache` `GET` and `DELETE` endpoints can be used to retrieve and clear cached schema. 
-Please note that these endpoints are not protected and anyone with access can use them. 
-- GET /cache
-- DELETE /cache
+In server mode, Biovalidator caches compiled validators, remotely referenced schemas, and responses from external APIs. `GET /cache` reports the schema inventory and API cache metrics without exposing API cache keys. `DELETE /cache` clears transient entries and accepts `scope=schemas`, `scope=api`, or `scope=all` (the default). Local schemas registered with `--ref` are configuration and are not removed.
+
+Transient schema and validation API cache entries expire after six hours by default. Set `BIOVALIDATOR_CACHE_TTL_SECONDS` to a positive whole number of seconds to change the lifetime. The setting is read at process startup, so changing it requires a restart. For example, use `3600` for one hour or `86400` for one day. The FEGA examples cache has its own `FEGA_EXAMPLES_CACHE_TTL_SECONDS` setting.
+
+These endpoints are not protected; restrict access as appropriate. See the [HTTP API reference](docs/api.md) for the response fields.
 
 ## Using biovalidator as a CLI command
 The biovalidator can also be run as a CLI application. If you provide `--schema` and `--data` as parameters to the application, it will execute in CLI mode. 
@@ -198,6 +212,7 @@ Examples:
 - `--ref`:
 If you have a set of local schemas that will be used as `$ref` in your validating schema, these can be passed to biovalidator using `--ref` argument.
 The `--ref` argument can be used in both server and CLI mode. `--ref` accepts file path, directory and glob patterns as values. 
+Each schema must define a unique, non-empty `$id`. Schemas are registered in the matching JSON Schema draft context and compiled on first use; an exact local `$id` match avoids a network request.
 When parsing glob patterns, it is better to wrap with `'` to avoid parsing them by command line. 
 ```
 node src/biovalidator --ref=/path/to/reference/schema/dir/*.json
@@ -235,6 +250,11 @@ node src/biovalidator --logDir=/log/directory/path
 - BIOVALIDATOR_PORT
 - BIOVALIDATOR_BASE_URL
 - BIOVALIDATOR_PID_PATH
+- BIOVALIDATOR_DEPLOYED_AT
+- BIOVALIDATOR_REVISION
+- BIOVALIDATOR_CACHE_TTL_SECONDS
+
+`BIOVALIDATOR_DEPLOYED_AT` and `BIOVALIDATOR_REVISION` override the deployment metadata reported by `/health`. Without them, a local server uses its process start time and the current Git commit when available.
 
 Example:
 ```
@@ -435,6 +455,10 @@ docker pull quay.io/ebi-ait/biovalidator:2.2.2
 Run in server mode
 ```shell
 docker run -p 3020:3020 -d quay.io/ebi-ait/biovalidator:2.2.2
+```
+Run in server mode with a one-hour cache lifetime
+```shell
+docker run -p 3020:3020 -e BIOVALIDATOR_CACHE_TTL_SECONDS=3600 -d quay.io/ebi-ait/biovalidator:2.2.2
 ```
 Run in onetime CLI mode
 ```shell

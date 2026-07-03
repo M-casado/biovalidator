@@ -45,8 +45,9 @@ class IsValidTaxonomy {
 
                     logger.log("debug", `Looking for taxonomy [${taxonomyExpression}] with ENA taxonomy validator.`);
 
+                    const cacheHit = enaTaxonomyCache.has(url);
                     let taxonomyPromise;
-                    if (enaTaxonomyCache.has(url)) {
+                    if (cacheHit) {
                         taxonomyPromise = Promise.resolve(enaTaxonomyCache.get(url));
                         logger.debug("Returning cached response for ENA taxonomy request: " + url);
                     } else {
@@ -56,8 +57,10 @@ class IsValidTaxonomy {
                     taxonomyPromise
                         .then((response) => {
                             if (response.status === 200 && response.data) {
-                                // store raw response for reuse
-                                enaTaxonomyCache.set(url, response);
+                                if (!cacheHit) {
+                                    // Store successful upstream responses without extending TTL on cache hits.
+                                    enaTaxonomyCache.set(url, response);
+                                }
                                 let numFound = response.data.length;
 
                                 if (numFound === 1 && response.data[0]["taxId"] && response.data[0]["submittable"] === "true") {

@@ -115,4 +115,55 @@ describe('Shared caches for keyword network calls', () => {
     await fn(schema, data);
     expect(axios).toHaveBeenCalledTimes(1);
   });
+
+  test('ENA cache hits do not extend TTL and an expired entry is fetched again', async () => {
+    const now = new Date('2026-07-03T10:00:00.000Z').getTime();
+    const dateNow = jest.spyOn(Date, 'now').mockReturnValue(now);
+    const schema = {some: 'schema'};
+    const data = 'Homo sapiens';
+    const url = `https://www.ebi.ac.uk/ena/taxonomy/rest/any-name/${encodeURIComponent(data)}`;
+    axios.mockResolvedValue({status: 200, data: [{taxId: 9606, submittable: 'true'}]});
+    const fn = new IsValidTaxonomy().generateKeywordFunction();
+
+    try {
+      await fn(schema, data);
+      const originalExpiration = enaTaxonomyCache.getTtl(url);
+
+      dateNow.mockReturnValue(now + 60_000);
+      await fn(schema, data);
+      expect(enaTaxonomyCache.getTtl(url)).toBe(originalExpiration);
+      expect(axios).toHaveBeenCalledTimes(1);
+
+      dateNow.mockReturnValue(originalExpiration + 1);
+      await fn(schema, data);
+      expect(axios).toHaveBeenCalledTimes(2);
+      expect(enaTaxonomyCache.getTtl(url)).toBe(originalExpiration + 1 + 21_600_000);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  test('identifiers.org cache hits do not extend TTL', async () => {
+    const now = new Date('2026-07-03T11:00:00.000Z').getTime();
+    const dateNow = jest.spyOn(Date, 'now').mockReturnValue(now);
+    const schema = {prefixes: ['uniprot']};
+    const identifier = 'uniprot:P12345';
+    axios.mockResolvedValue({
+      status: 200,
+      data: {payload: {resolvedResources: [{compactIdentifierResolvedUrl: 'https://example.org/P12345'}]}}
+    });
+    const fn = new IsValidIdentifier().validationFunction();
+
+    try {
+      await fn(schema, identifier);
+      const originalExpiration = identifiersCache.getTtl(identifier);
+
+      dateNow.mockReturnValue(now + 60_000);
+      await fn(schema, identifier);
+      expect(identifiersCache.getTtl(identifier)).toBe(originalExpiration);
+      expect(axios).toHaveBeenCalledTimes(1);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
 });

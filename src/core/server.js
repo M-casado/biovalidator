@@ -6,6 +6,47 @@ const BioValidator = require("./biovalidator-core")
 const {FegaExamplesClient} = require("../utils/fega_examples_client");
 const npid = require("npid");
 const path = require("path");
+const childProcess = require("child_process");
+const packageMetadata = require("../../package.json");
+const {getApiCacheDetails, clearApiCaches} = require("../keywords/shared-cache");
+
+const PROCESS_STARTED_AT = new Date(Date.now() - (process.uptime() * 1000)).toISOString();
+const PROJECT_ROOT = path.resolve(__dirname, "../..");
+
+/**
+ * Resolve immutable metadata for this server instance. Explicit deployment
+ * values take precedence; a local checkout falls back to its current commit.
+ * Failure to invoke Git is expected for packaged installations and returns a
+ * null revision rather than preventing the server from starting.
+ *
+ * @param {string} processStartedAt ISO timestamp for the current process.
+ * @param {NodeJS.ProcessEnv} [environment=process.env] environment variables.
+ * @param {string} [projectRoot=PROJECT_ROOT] checkout used for Git discovery.
+ * @returns {{deployedAt: string, revision: string|null}}
+ */
+function resolveDeploymentMetadata(
+    processStartedAt,
+    environment = process.env,
+    projectRoot = PROJECT_ROOT
+) {
+  let revision = environment.BIOVALIDATOR_REVISION || null;
+  if (!revision) {
+    try {
+      revision = childProcess.execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: projectRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      }).trim() || null;
+    } catch (error) {
+      revision = null;
+    }
+  }
+
+  return {
+    deployedAt: environment.BIOVALIDATOR_DEPLOYED_AT || processStartedAt,
+    revision
+  };
+}
 
 class BioValidatorServer {
   constructor(port, localSchemaPath) {
@@ -15,6 +56,19 @@ class BioValidatorServer {
     this.baseUrl = process.env.BIOVALIDATOR_BASE_URL || '/';
     this.logPath = process.env.BIOVALIDATOR_LOG_DIR || './logs';
     this.pidPath = process.env.BIOVALIDATOR_PID_PATH || './server.pid';
+    this.deploymentMetadata = resolveDeploymentMetadata(PROCESS_STARTED_AT);
+    this.validationMetrics = {
+      requests: {
+        total: 0,
+        successful: 0,
+        failed: 0,
+        in_flight: 0
+      },
+      results: {
+        valid: 0,
+        invalid: 0
+      }
+    };
   }
 
   withBaseUrl(baseUrl) {
@@ -46,6 +100,9 @@ class BioValidatorServer {
     this.router = express.Router();
     this.router.use(express.static(path.join(__dirname, "..", "views")));
 
+    // Mount before the JSON parser so malformed POST bodies are counted too.
+    this.app.use(this.baseUrl, this._trackValidationRequest.bind(this));
+
     this.app.use(express.json({limit:'1mb'}));
 
     this.app.use(function(req, res, next) {
@@ -70,6 +127,48 @@ class BioValidatorServer {
     return this;
   }
 
+  /**
+   * Track POST /validate requests for the lifetime of this process. A request
+   * is successful when its HTTP response is 2xx; valid/invalid counts describe
+   * validation outcomes and therefore only advance for processed responses.
+   * The request invariant is total = successful + failed + in_flight.
+   */
+  _trackValidationRequest(req, res, next) {
+    if (req.method !== "POST" || !/^\/validate\/?$/.test(req.path)) {
+      next();
+      return;
+    }
+
+    const requests = this.validationMetrics.requests;
+    requests.total += 1;
+    requests.in_flight += 1;
+    let finalized = false;
+
+    const finalize = (aborted) => {
+      if (finalized) {
+        return;
+      }
+      finalized = true;
+      requests.in_flight = Math.max(0, requests.in_flight - 1);
+
+      if (aborted || res.statusCode < 200 || res.statusCode >= 300) {
+        requests.failed += 1;
+        return;
+      }
+
+      requests.successful += 1;
+      if (res.locals.validationResult === "valid") {
+        this.validationMetrics.results.valid += 1;
+      } else if (res.locals.validationResult === "invalid") {
+        this.validationMetrics.results.invalid += 1;
+      }
+    };
+
+    res.once("finish", () => finalize(false));
+    res.once("close", () => finalize(!res.writableEnded));
+    next();
+  }
+
   _configureEndpoints() {
     this.router.post("/validate", (req, res) => {
       let startTime = new Date().getTime();
@@ -78,6 +177,7 @@ class BioValidatorServer {
 
       if (inputSchema && inputObject) {
         this.biovalidator.validate(inputSchema, inputObject).then((output) => {
+          res.locals.validationResult = output.length === 0 ? "valid" : "invalid";
           res.status(200).send(output);
           logger.info("New validation request: Processed successfully in " + (new Date().getTime() - startTime) + "ms.");
         }).catch((error) => {
@@ -126,18 +226,71 @@ class BioValidatorServer {
     });
 
     this.router.get("/cache", (req, res) => {
-      let cachedSchema = this.biovalidator.getCachedSchema();
-      res.send(cachedSchema);
+      res.send({
+        schemas: this.biovalidator.getSchemaInventory(),
+        api: getApiCacheDetails()
+      });
+    });
+
+    this.router.get("/health", (req, res) => {
+      res.status(200).send(this._getHealthDetails());
     });
 
     this.router.delete("/cache", (req, res) => {
-      this.biovalidator.clearCachedSchema();
+      const scope = req.query.scope === undefined ? "all" : req.query.scope;
+      const validScopes = new Set(["all", "schemas", "api"]);
+      if (typeof scope !== "string" || !validScopes.has(scope)) {
+        res.status(400).send(new AppError("Invalid cache scope. Expected one of: all, schemas, api."));
+        return;
+      }
+
+      const cleared = [];
+      if (scope === "all" || scope === "schemas") {
+        this.biovalidator.clearSchemaCaches();
+        cleared.push("schemas");
+      }
+      if (scope === "all" || scope === "api") {
+        clearApiCaches();
+        cleared.push("api");
+      }
+
       res.send({
-        "message": "Cache cleared successfully"
+        message: "Cache cleared successfully",
+        scope,
+        cleared
       });
     });
 
     return this;
+  }
+
+  /**
+   * Build the process-local health snapshot. `status` is a liveness signal and
+   * does not probe OLS, ENA Taxonomy, identifiers.org, or other dependencies.
+   * Counters and cache history reset on process restart. Cache timestamps are
+   * null until the corresponding event occurs or while no current entry can
+   * supply an insertion/expiration boundary.
+   *
+   * @returns {object} Current process, deployment, validation, and cache data.
+   */
+  _getHealthDetails() {
+    return {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      version: packageMetadata.version,
+      uptime_seconds: process.uptime(),
+      process_started_at: PROCESS_STARTED_AT,
+      deployed_at: this.deploymentMetadata.deployedAt,
+      revision: this.deploymentMetadata.revision,
+      validation: {
+        requests: {...this.validationMetrics.requests},
+        results: {...this.validationMetrics.results}
+      },
+      cache: {
+        schemas: this.biovalidator.getSchemaCacheDetails(),
+        api: getApiCacheDetails()
+      }
+    };
   }
 
   _startServer() {
@@ -183,5 +336,4 @@ class BioValidatorServer {
 }
 
 module.exports = BioValidatorServer;
-
-
+module.exports.resolveDeploymentMetadata = resolveDeploymentMetadata;
