@@ -14,6 +14,33 @@ const PROCESS_STARTED_AT = new Date(Date.now() - (process.uptime() * 1000)).toIS
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
 
 /**
+ * Resolve the runtime toolchain versions once for the lifetime of the process.
+ * npm may be absent from a minimal runtime image, which should not prevent the
+ * server from starting or make the health endpoint unavailable.
+ *
+ * @param {Function} [executeFileSync=childProcess.execFileSync] command runner.
+ * @returns {{node: string, npm: string|null}}
+ */
+function resolveDependencyVersions(executeFileSync = childProcess.execFileSync) {
+  let npmVersion = null;
+  try {
+    npmVersion = executeFileSync("npm", ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim().replace(/^v/, "") || null;
+  } catch (error) {
+    npmVersion = null;
+  }
+
+  return {
+    node: process.versions.node.replace(/^v/, ""),
+    npm: npmVersion
+  };
+}
+
+const DEPENDENCY_VERSIONS = Object.freeze(resolveDependencyVersions());
+
+/**
  * Resolve immutable metadata for this server instance. Explicit deployment
  * values take precedence; a local checkout falls back to its current commit.
  * Failure to invoke Git is expected for packaged installations and returns a
@@ -282,6 +309,7 @@ class BioValidatorServer {
       process_started_at: PROCESS_STARTED_AT,
       deployed_at: this.deploymentMetadata.deployedAt,
       revision: this.deploymentMetadata.revision,
+      dependency_versions: DEPENDENCY_VERSIONS,
       validation: {
         requests: {...this.validationMetrics.requests},
         results: {...this.validationMetrics.results}
@@ -337,3 +365,4 @@ class BioValidatorServer {
 
 module.exports = BioValidatorServer;
 module.exports.resolveDeploymentMetadata = resolveDeploymentMetadata;
+module.exports.resolveDependencyVersions = resolveDependencyVersions;

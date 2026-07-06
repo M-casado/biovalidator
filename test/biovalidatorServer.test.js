@@ -13,7 +13,7 @@ const {
 } = require('../src/keywords/shared-cache');
 
 const BioValidatorServer = require('../src/core/server');
-const {resolveDeploymentMetadata} = BioValidatorServer;
+const {resolveDeploymentMetadata, resolveDependencyVersions} = BioValidatorServer;
 const supertest = require('supertest');
 const server = new BioValidatorServer("3020", "");
 server._configureServer()._configureEndpoints();
@@ -291,6 +291,10 @@ describe('biovalidator server endpoints', () => {
         version: '2.2.2',
         deployed_at: '2026-07-03T12:00:00Z',
         revision: 'abc123',
+        dependency_versions: {
+          node: process.versions.node,
+          npm: expect.any(String)
+        },
         validation: {
           requests: {total: 0, successful: 0, failed: 0, in_flight: 0},
           results: {valid: 0, invalid: 0}
@@ -308,6 +312,8 @@ describe('biovalidator server endpoints', () => {
       expect(Number.isFinite(res.body.uptime_seconds)).toBe(true);
       expect(new Date(res.body.timestamp).toISOString()).toBe(res.body.timestamp);
       expect(new Date(res.body.process_started_at).toISOString()).toBe(res.body.process_started_at);
+      expect(res.body.dependency_versions.node).not.toMatch(/^v/);
+      expect(res.body.dependency_versions.npm).not.toMatch(/^v/);
 
       for (const cache of [
         res.body.cache.schemas,
@@ -359,6 +365,30 @@ describe('biovalidator server endpoints', () => {
     expect(resolveDeploymentMetadata(processStartedAt, {}, '/path/that/does/not/exist')).toEqual({
       deployedAt: processStartedAt,
       revision: null
+    });
+  });
+
+  it('normalizes runtime dependency versions', () => {
+    const executeFileSync = jest.fn().mockReturnValue('v10.8.2\n');
+
+    expect(resolveDependencyVersions(executeFileSync)).toEqual({
+      node: process.versions.node.replace(/^v/, ''),
+      npm: '10.8.2'
+    });
+    expect(executeFileSync).toHaveBeenCalledWith('npm', ['--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+  });
+
+  it('reports a null npm version when npm is unavailable', () => {
+    const executeFileSync = jest.fn(() => {
+      throw new Error('npm not found');
+    });
+
+    expect(resolveDependencyVersions(executeFileSync)).toEqual({
+      node: process.versions.node.replace(/^v/, ''),
+      npm: null
     });
   });
 

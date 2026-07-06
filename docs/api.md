@@ -34,6 +34,7 @@ The default base URL is `http://localhost:3020/`. `BIOVALIDATOR_BASE_URL` may ad
 | `uptime_seconds`, `process_started_at` | Process lifetime and calculated UTC start time. |
 | `deployed_at` | `BIOVALIDATOR_DEPLOYED_AT`, or process start time when unset. |
 | `revision` | `BIOVALIDATOR_REVISION`, or the local Git commit; `null` when neither is available. |
+| `dependency_versions` | Node.js and npm versions in the running deployment. `npm` is `null` when its binary is unavailable. |
 | `validation.requests` | POST `/validate` totals: all received, 2xx successes, failed/aborted requests, and requests in flight. |
 | `validation.results` | Valid and invalid outcomes among successfully processed validations. |
 | `cache.schemas.entries` | Total current schema entries, split into compiled validators and referenced schemas. |
