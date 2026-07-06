@@ -472,4 +472,4 @@ nodemon src/biovalidator
 ```
 
 ## License
- For more details about licensing see the [LICENSE](LICENSE.md).
+For more details about licensing see the [LICENSE](LICENSE.md).
