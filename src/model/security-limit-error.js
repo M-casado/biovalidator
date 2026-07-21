@@ -11,6 +11,8 @@ class SecurityLimitError extends Error {
         this.status = options.status || 422;
         this.limit = options.limit;
         this.configuration = options.configuration;
+        this.reference = options.reference;
+        this.retryAfterSeconds = options.retryAfterSeconds;
         this.help = options.help || HELP;
         this.expose = true;
     }
@@ -25,6 +27,12 @@ class SecurityLimitError extends Error {
         }
         if (this.configuration) {
             body.configuration = this.configuration;
+        }
+        if (this.reference) {
+            body.reference = this.reference;
+        }
+        if (this.retryAfterSeconds !== undefined) {
+            body.retry_after_seconds = this.retryAfterSeconds;
         }
         body.help = this.help;
         return body;

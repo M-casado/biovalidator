@@ -51,7 +51,7 @@ function serializeError(error) {
         name: error && error.name,
         message: error && (error.message || error.error) || "Validation failed"
     };
-    for (const key of ["code", "status", "limit", "configuration", "help", "error"]) {
+    for (const key of ["code", "status", "limit", "configuration", "reference", "retryAfterSeconds", "help", "error"]) {
         if (error && error[key] !== undefined) {
             serialized[key] = error[key];
         }

@@ -24,6 +24,7 @@ describe('biovalidator server endpoints', () => {
   beforeEach(() => {
     axios.mockReset();
     server.fegaExamplesClient.clearCache();
+    server.lastExamplesRefreshAt = 0;
   });
 
   afterAll(done => {
@@ -103,10 +104,13 @@ describe('biovalidator server endpoints', () => {
     expect(javascript.text).toContain('Valid JSON syntax.');
     expect(javascript.text).toContain('Check the JSON syntax in both editors before validating.');
     expect(javascript.text).toContain('cspNonce');
+    expect(javascript.text).toContain('Validation error details');
+    expect(javascript.text).toContain('Please wait');
     expect(stylesheet.status).toEqual(200);
     expect(stylesheet.type).toEqual(expect.stringContaining('css'));
     expect(stylesheet.text).toContain('.button-tooltip');
     expect(stylesheet.text).toContain('.btn.example-ready');
+    expect(stylesheet.text).toContain('.result-editor');
     expect(logo.status).toEqual(200);
     expect(logo.type).toEqual(expect.stringContaining('png'));
   });
@@ -166,6 +170,20 @@ describe('biovalidator server endpoints', () => {
 
     expect(res.status).toEqual(400);
     expect(res.body.error).toContain("provide both 'schema' and 'data'");
+  });
+
+  it('POST /validate identifies the unresolved remote $ref', async () => {
+    const res = await requestWithSupertest.post('/validate').send({
+      schema: {$ref: 'pepito'},
+      data: {}
+    });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({
+      code: 'OUTBOUND_URL_INVALID',
+      reference: 'pepito',
+      error: expect.stringContaining("remote $ref 'pepito'")
+    });
   });
 
   it('GET /examples returns dynamically fetched FEGA examples', async () => {
@@ -279,8 +297,43 @@ describe('biovalidator server endpoints', () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(429);
     expect(second.body.code).toBe('EXAMPLES_REFRESH_RATE_LIMIT');
+    expect(second.body.retry_after_seconds).toBeGreaterThanOrEqual(1);
+    expect(second.headers['retry-after']).toBe(String(second.body.retry_after_seconds));
+    expect(second.body.error).toContain('before refreshing the FEGA examples');
     expect(second.body.help).toContain('Deploy Biovalidator locally');
     expect(axios).toHaveBeenCalledTimes(2);
+  });
+
+  it('GET /examples preserves the previous payload when a forced refresh fails', async () => {
+    axios.mockImplementation((config) => {
+      if (config.url.includes('/git/trees/')) {
+        return Promise.resolve({
+          data: {
+            tree: [{
+              path: 'schemas/entities/cohort/examples/valid/cohort-valid-minimal-study-defined.json',
+              type: 'blob'
+            }]
+          }
+        });
+      }
+      return Promise.resolve({
+        data: {
+          schema: {"$ref": "https://example.org/schema.json"},
+          data: {"@type": "ega:cohort"}
+        }
+      });
+    });
+
+    const initial = await requestWithSupertest.get('/examples');
+    axios.mockRejectedValue(new Error('GitHub unavailable'));
+
+    const failedRefresh = await requestWithSupertest.get('/examples?refresh=true');
+    const retained = await requestWithSupertest.get('/examples');
+
+    expect(initial.status).toBe(200);
+    expect(failedRefresh.status).toBe(502);
+    expect(retained.status).toBe(200);
+    expect(retained.body).toEqual(initial.body);
   });
 
   it('GET /examples returns controlled error when upstream fetch fails', async () => {

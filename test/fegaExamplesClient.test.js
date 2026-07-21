@@ -90,6 +90,25 @@ describe("FegaExamplesClient", () => {
         ]);
     });
 
+    test("retains the last successful payload when a refresh fails", async () => {
+        axios.mockImplementation((config) => {
+            if (config.url.includes("/git/trees/")) {
+                return Promise.resolve(treeResponse([
+                    "schemas/entities/cohort/examples/valid/cohort-valid-minimal-study-defined.json"
+                ]));
+            }
+            return Promise.resolve({data: exampleWrapper("cohort")});
+        });
+
+        const client = new FegaExamplesClient();
+        const previous = await client.getExamples();
+        axios.mockRejectedValue(new Error("GitHub unavailable"));
+
+        await expect(client.refreshExamples()).rejects.toThrow("GitHub unavailable");
+        await expect(client.getExamples()).resolves.toEqual(previous);
+        expect(axios).toHaveBeenCalledTimes(3);
+    });
+
     test("rejects malformed wrappers missing schema or data", async () => {
         axios.mockImplementation((config) => {
             if (config.url.includes("/git/trees/")) {

@@ -44,11 +44,29 @@ class FegaExamplesClient {
         }
 
         const payload = await this._fetchExamples();
+        this._savePayload(payload);
+        return payload;
+    }
+
+    /**
+     * Fetch a fresh examples payload without discarding the last successful
+     * payload until the replacement has been fetched successfully.
+     */
+    async refreshExamples() {
+        const payload = await this._fetchExamples({cache: false});
+        this._savePayload(payload);
+        if (typeof this.httpClient.clearKind === "function") {
+            this.httpClient.clearKind("githubApi");
+            this.httpClient.clearKind("githubRaw");
+        }
+        return payload;
+    }
+
+    _savePayload(payload) {
         this.cache = {
             payload,
-            expiresAt: now + (this.cacheTtlSeconds * 1000)
+            expiresAt: Date.now() + (this.cacheTtlSeconds * 1000)
         };
-        return payload;
     }
 
     clearCache() {
@@ -59,8 +77,8 @@ class FegaExamplesClient {
         }
     }
 
-    async _fetchExamples() {
-        const treeResult = await this._fetchGitTree();
+    async _fetchExamples(options = {}) {
+        const treeResult = await this._fetchGitTree(options);
         const tree = treeResult.tree;
         if (tree.length > this.securityConfig.githubTreeMaxEntries) {
             throw new SecurityLimitError(
@@ -103,7 +121,7 @@ class FegaExamplesClient {
         const examples = await mapWithConcurrency(
             exampleFiles,
             Math.min(16, this.securityConfig.outboundConcurrency),
-            (filePath) => this._fetchExample(filePath, treeResult.sha || this.ref)
+            (filePath) => this._fetchExample(filePath, treeResult.sha || this.ref, options)
         );
         examples.sort((left, right) => (
             left.entity.localeCompare(right.entity) ||
@@ -119,12 +137,12 @@ class FegaExamplesClient {
         };
     }
 
-    async _fetchGitTree() {
+    async _fetchGitTree(options = {}) {
         const url = `https://api.github.com/repos/${this.repo}/git/trees/${encodeURIComponent(this.ref)}?recursive=1`;
         const response = await this.httpClient.getJson(url, {
             kind: "githubApi",
             maxBytes: this.securityConfig.githubTreeMaxBytes,
-            cache: true
+            cache: options.cache !== false
         });
         if (!response || !response.data || !Array.isArray(response.data.tree)) {
             throw new Error("Malformed FEGA metadata schema tree response");
@@ -132,7 +150,7 @@ class FegaExamplesClient {
         return {sha: typeof response.data.sha === "string" ? response.data.sha : null, tree: response.data.tree};
     }
 
-    async _fetchExample(filePath, revision) {
+    async _fetchExample(filePath, revision, options = {}) {
         const match = filePath.match(EXAMPLE_PATH_REGEX);
         if (!match) {
             throw new Error(`Invalid FEGA example path: ${filePath}`);
@@ -145,7 +163,7 @@ class FegaExamplesClient {
         const response = await this.httpClient.getJson(rawUrl, {
             kind: "githubRaw",
             maxBytes: this.securityConfig.remoteSchemaMaxBytes,
-            cache: true
+            cache: options.cache !== false
         });
         const wrapper = response && response.data;
 

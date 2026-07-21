@@ -148,6 +148,18 @@
     min-height: 160px;
 }
 
+.result-panel .result-editor {
+    height: auto;
+    max-height: 32rem;
+    border: 0;
+    font-size: 0.85rem;
+}
+
+.result-panel .result-editor .cm-scroller {
+    max-height: 32rem;
+    overflow: auto;
+}
+
 .docs-panel {
     border-top: 1px solid #dee2e6;
     margin-top: 3rem;

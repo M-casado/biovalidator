@@ -97,8 +97,22 @@ describe("server security hardening", () => {
         const adapter = jest.fn();
         const validator = new BioValidator(null, {securityProfile: "server", adapter});
         await expect(validator.validate({$ref: "https://attacker.invalid/schema.json"}, {}))
-            .rejects.toMatchObject({code: "REMOTE_SCHEMA_DESTINATION_DENIED"});
+            .rejects.toMatchObject({
+                code: "REMOTE_SCHEMA_DESTINATION_DENIED",
+                reference: "https://attacker.invalid/schema.json",
+                message: expect.stringContaining("remote $ref 'https://attacker.invalid/schema.json'")
+            });
         expect(adapter).not.toHaveBeenCalled();
+    });
+
+    test("identifies an invalid remote $ref in the public error", async () => {
+        const validator = new BioValidator(null, {securityProfile: "server"});
+
+        await expect(validator.validate({$ref: "pepito"}, {})).rejects.toMatchObject({
+            code: "OUTBOUND_URL_INVALID",
+            reference: "pepito",
+            message: expect.stringContaining("remote $ref 'pepito'")
+        });
     });
 
     test("server profile accepts an allowlisted self-identifying remote schema", async () => {

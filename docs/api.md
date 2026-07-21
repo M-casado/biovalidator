@@ -7,7 +7,7 @@ The default base URL is `http://localhost:3020/`. `BIOVALIDATOR_BASE_URL` may ad
 | `GET` | `/` | Bundled browser interface. |
 | `GET` | `/validate` | Validation request example. |
 | `POST` | `/validate` | Validate `data` against `schema`. |
-| `GET` | `/examples` | FEGA examples; `refresh=true` clears the examples cache first. |
+| `GET` | `/examples` | FEGA examples; `refresh=true` fetches a replacement and swaps it into the cache only after success. |
 | `GET` | `/cache` | Registered schema IDs, transient schema cache keys, and API cache metrics. |
 | `DELETE` | `/cache` | Clear `all`, `schemas`, or `api` caches using the optional `scope` query parameter. The default is `all`. |
 | `GET` | `/health` | Process-local liveness, validation counters, and cache metrics. |

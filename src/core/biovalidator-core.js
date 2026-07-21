@@ -659,13 +659,27 @@ class BioValidator {
                         return loadedSchema;
                     }).catch(err => {
                         if (err instanceof SecurityLimitError) {
+                            if (!err.reference) {
+                                err.reference = uri;
+                            }
+                            if (!/remote \$ref/i.test(err.message)) {
+                                err.message = `Unable to resolve remote $ref '${uri}': ${err.message}`;
+                            }
                             throw err;
                         }
                         const status = err.response ? err.response.status : "network/DNS/file";
                         logger.error(
                             `Failed to fetch referenced schema URI: ${uri} (Status: ${status}). Error: ${err.message || err}`
                         );
-                        throw new AppError(`Failed to resolve $ref via network/DNS/file (Status: ${status}): ${uri}. Original error: ${err.message}`);
+                        throw new SecurityLimitError(
+                            `Unable to resolve remote $ref '${uri}' via network/DNS/file (status: ${status}).`,
+                            {
+                                code: "REMOTE_REFERENCE_RESOLUTION_FAILED",
+                                status: 502,
+                                reference: uri,
+                                help: "Amend this $ref or make the referenced schema available to the Biovalidator deployment."
+                            }
+                        );
                     });
         };
 

@@ -31,6 +31,8 @@ const cspNonce = document.querySelector('meta[name="biovalidator-csp-nonce"]')?.
 const enabledTooltipDelay = 1500;
 const disabledTooltipDelay = 300;
 let visibleTooltip = null;
+let resultView = null;
+let examplesFetched = false;
 
 function hideTooltip(control) {
   window.clearTimeout(control.tooltipTimer);
@@ -249,34 +251,69 @@ function setValidationResult(state) {
   failedResult.hidden = state !== "invalid";
 }
 
-function appendValidationErrors(response) {
-  const list = document.createElement("ul");
-  response.forEach((entry) => {
-    const item = document.createElement("li");
-    item.append(document.createTextNode(entry.dataPath || entry.instancePath || "Document"));
-    const messages = Array.isArray(entry.errors) ? entry.errors : [];
-    if (messages.length) {
-      const details = document.createElement("ul");
-      messages.forEach((message) => {
-        const detail = document.createElement("li");
-        detail.textContent = typeof message === "string" ? message : JSON.stringify(message);
-        details.append(detail);
-      });
-      item.append(details);
-    } else if (entry.message) {
-      item.append(document.createTextNode(`: ${entry.message}`));
-    }
-    list.append(item);
+function createResultEditor() {
+  resultView = new EditorView({
+    doc: "",
+    parent: results,
+    extensions: [
+      lineNumbers(),
+      highlightSpecialChars(),
+      syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
+      json(),
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      EditorState.tabSize.of(2),
+      EditorView.lineWrapping,
+      EditorView.contentAttributes.of({
+        "aria-label": "Validation error details"
+      }),
+      ...(cspNonce ? [EditorView.cspNonce.of(cspNonce)] : [])
+    ]
   });
-  results.append(list);
+  resultView.dom.classList.add("result-editor");
+  resultView.dom.hidden = true;
 }
 
-async function responseMessage(response) {
+function setResultPayload(payload) {
+  const formatted = payload === null ? "" : JSON.stringify(payload, null, 2);
+  resultView.dispatch({
+    changes: {from: 0, to: resultView.state.doc.length, insert: formatted},
+    selection: {anchor: 0}
+  });
+  resultView.dom.hidden = payload === null;
+}
+
+async function responsePayload(response) {
   const contentType = response.headers.get("content-type") || "";
+  const text = await response.text();
   if (contentType.includes("application/json")) {
-    return JSON.stringify(await response.json());
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      return {error: text || "The server returned malformed JSON."};
+    }
   }
-  return await response.text();
+  return {error: text || "The server returned an empty response."};
+}
+
+function responseError(payload) {
+  const error = new Error(
+    payload && typeof payload.error === "string" ? payload.error : "Request failed."
+  );
+  error.payload = payload;
+  return error;
+}
+
+function exampleErrorMessage(error) {
+  const payload = error.payload || {};
+  if (payload.code === "EXAMPLES_REFRESH_RATE_LIMIT") {
+    const seconds = Number(payload.retry_after_seconds) || 1;
+    return `Please wait ${seconds} second${seconds === 1 ? "" : "s"} before refreshing the examples.`;
+  }
+  if (typeof payload.error === "string" && payload.error) {
+    return payload.error;
+  }
+  return error.message || "Unable to load FEGA examples from this endpoint.";
 }
 
 function endpoint(relativeUrl) {
@@ -284,8 +321,8 @@ function endpoint(relativeUrl) {
 }
 
 async function validateDocuments() {
-  results.replaceChildren();
   setValidationResult(null);
+  setResultPayload(null);
   let schema;
   let data;
   try {
@@ -293,7 +330,7 @@ async function validateDocuments() {
     data = JSON.parse(editorText(editors.data));
   } catch (error) {
     setValidationResult("invalid");
-    results.textContent = `Unable to parse the JSON input: ${error.message}`;
+    setResultPayload({error: `Unable to parse the JSON input: ${error.message}`});
     return;
   }
 
@@ -305,19 +342,20 @@ async function validateDocuments() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({schema, data})
     });
+    const payload = await responsePayload(response);
     if (!response.ok) {
-      throw new Error(await responseMessage(response));
+      throw responseError(payload);
     }
-    const validationErrors = await response.json();
+    const validationErrors = payload;
     if (validationErrors.length === 0) {
       setValidationResult("valid");
     } else {
       setValidationResult("invalid");
-      appendValidationErrors(validationErrors);
+      setResultPayload(validationErrors);
     }
   } catch (error) {
     setValidationResult("invalid");
-    results.textContent = error.message || "Validation request failed.";
+    setResultPayload(error.payload || {error: error.message || "Validation request failed."});
   } finally {
     validateButton.textContent = "Validate";
     updateValidateButton();
@@ -362,6 +400,8 @@ async function fetchExamples() {
   const loadButton = document.getElementById("load-example");
   const fetchButton = document.getElementById("fetch-examples");
   const previousButtonText = fetchButton.textContent;
+  const hadExamples = Array.isArray(select.examples) && select.examples.length > 0;
+  const previousValue = select.value;
   let fetched = false;
   select.disabled = true;
   loadButton.classList.remove("example-ready");
@@ -370,19 +410,20 @@ async function fetchExamples() {
   fetchButton.textContent = "Fetching…";
   setExamplesMessage("Loading FEGA examples…");
   try {
-    const response = await fetch(endpoint("examples?refresh=true"));
+    const response = await fetch(endpoint(examplesFetched ? "examples?refresh=true" : "examples"));
+    const payload = await responsePayload(response);
     if (!response.ok) {
-      throw new Error("Examples request failed.");
+      throw responseError(payload);
     }
-    populateExamples(await response.json());
+    populateExamples(payload);
     fetchButton.textContent = "Refresh examples";
     fetched = true;
+    examplesFetched = true;
   } catch (error) {
-    select.replaceChildren(new Option("FEGA examples unavailable", ""));
-    select.examples = [];
-    loadButton.classList.remove("example-ready");
-    setButtonState(loadButton, {disabled: true, tooltip: "Fetch examples, then select one to load."});
-    setExamplesMessage("Unable to load FEGA examples from this endpoint.", true);
+    select.value = previousValue;
+    select.disabled = !hadExamples;
+    updateLoadExampleButton();
+    setExamplesMessage(exampleErrorMessage(error), true);
   } finally {
     if (!fetched) {
       fetchButton.textContent = previousButtonText;
@@ -412,6 +453,7 @@ function initialise() {
   document.querySelectorAll("[data-tooltip]").forEach(addButtonTooltip);
   createJsonEditor("schema");
   createJsonEditor("data");
+  createResultEditor();
   document.getElementById("example-select").disabled = true;
   setButtonState(document.getElementById("load-example"), {
     disabled: true,

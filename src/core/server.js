@@ -319,22 +319,30 @@ class BioValidatorServer {
     this.router.get("/examples", (req, res) => {
       if (req.query.refresh === "true") {
         const now = Date.now();
-        if (now - this.lastExamplesRefreshAt < this.securityConfig.examplesRefreshMinIntervalMs) {
+        const elapsed = now - this.lastExamplesRefreshAt;
+        if (elapsed < this.securityConfig.examplesRefreshMinIntervalMs) {
+          const retryAfterSeconds = Math.max(1, Math.ceil(
+            (this.securityConfig.examplesRefreshMinIntervalMs - elapsed) / 1000
+          ));
           const error = new SecurityLimitError(
-            `FEGA example refresh is limited to once every ${this.securityConfig.examplesRefreshMinIntervalMs}ms by this Biovalidator deployment.`,
+            `Please wait ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"} before refreshing the FEGA examples.`,
             {
               code: "EXAMPLES_REFRESH_RATE_LIMIT",
               status: 429,
-              configuration: "BIOVALIDATOR_EXAMPLES_REFRESH_MIN_INTERVAL_MS"
+              configuration: "BIOVALIDATOR_EXAMPLES_REFRESH_MIN_INTERVAL_MS",
+              retryAfterSeconds
             }
           );
+          res.set("Retry-After", String(retryAfterSeconds));
           res.status(error.status).send(error);
           return;
         }
         this.lastExamplesRefreshAt = now;
-        this.fegaExamplesClient.clearCache();
       }
-      this.fegaExamplesClient.getExamples().then((examples) => {
+      const examplesPromise = req.query.refresh === "true"
+        ? this.fegaExamplesClient.refreshExamples()
+        : this.fegaExamplesClient.getExamples();
+      examplesPromise.then((examples) => {
         res.status(200).send(examples);
       }).catch((error) => {
         if (error instanceof SecurityLimitError) {
