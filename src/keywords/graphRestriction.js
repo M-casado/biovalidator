@@ -6,15 +6,19 @@ const {
     OlsSearchClient,
     OlsResolutionError
 } = require("../utils/ols_search_client");
+const SecurityLimitError = require("../model/security-limit-error");
+const {loadSecurityConfig} = require("../utils/security-config");
 
 const SUPPORTED_QUERY_FIELDS = new Set(["obo_id", "label"]);
 
 class GraphRestriction {
-    constructor(keywordName, olsSearchUrl) {
+    constructor(keywordName, olsSearchUrl, options = {}) {
         const constants = require('../utils/constants');
         this.keywordName = keywordName ? keywordName : "graphRestriction";
         this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
-        this.olsClient = new OlsSearchClient(this.olsSearchUrl);
+        this.securityConfig = options.securityConfig || loadSecurityConfig();
+        this.httpOptions = options;
+        this.olsClient = new OlsSearchClient(this.olsSearchUrl, options);
     }
 
     /**
@@ -29,7 +33,22 @@ class GraphRestriction {
             async: GraphRestriction._isAsync(),
             type: "string",
             validate: this.generateKeywordFunction(),
-            errors: true
+            errors: true,
+            schemaType: "object",
+            metaSchema: {
+                type: "object",
+                additionalProperties: false,
+                required: ["classes", "ontologies"],
+                properties: {
+                    classes: {type: "array", minItems: 1, items: {type: "string", minLength: 1}},
+                    ontologies: {type: "array", minItems: 1, items: {type: "string", minLength: 1}},
+                    relations: {type: "array", minItems: 1, items: {type: "string", minLength: 1}},
+                    direct: {type: "boolean"},
+                    includeSelf: {type: "boolean"},
+                    queryFields: {type: "array", minItems: 1, items: {enum: ["obo_id", "label"]}},
+                    $comment: {type: "string"}
+                }
+            }
         };
 
         return ajv.addKeyword(keywordDefinition);
@@ -48,7 +67,7 @@ class GraphRestriction {
     }
 
     generateKeywordFunction() {
-        const curieExpansion = new CurieExpansion(this.olsSearchUrl);
+        const curieExpansion = new CurieExpansion(this.olsSearchUrl, this.httpOptions);
 
         const callCurieExpansion = (terms) => {
             let expanded = terms.map((t) => {
@@ -70,6 +89,41 @@ class GraphRestriction {
             const parentTerms = schema.classes;
             const ontologyIds = schema.ontologies;
             const queryFields = schema.queryFields || ["obo_id"];
+
+            for (const [name, values] of [
+                ["classes", parentTerms],
+                ["ontologies", ontologyIds],
+                ["relations", schema.relations],
+                ["queryFields", queryFields]
+            ]) {
+                if (Array.isArray(values) && values.length > this.securityConfig.customKeywordArrayMax) {
+                    throw new SecurityLimitError(
+                        `graphRestriction.${name} exceeded this Biovalidator deployment's ${this.securityConfig.customKeywordArrayMax}-entry limit.`,
+                        {
+                            code: "CUSTOM_KEYWORD_ARRAY_LIMIT",
+                            configuration: "BIOVALIDATOR_CUSTOM_KEYWORD_ARRAY_MAX",
+                            limit: {name: "custom_keyword_array_max", configured: this.securityConfig.customKeywordArrayMax, observed: values.length, unit: "entries"}
+                        }
+                    );
+                }
+                const oversized = Array.isArray(values)
+                    ? values.find((value) => typeof value === "string" &&
+                        Buffer.byteLength(value) > this.securityConfig.customKeywordStringMaxBytes)
+                    : undefined;
+                if (oversized !== undefined) {
+                    throw new SecurityLimitError(
+                        `A graphRestriction.${name} value exceeded this Biovalidator deployment's ` +
+                        `${this.securityConfig.customKeywordStringMaxBytes}-byte limit.`,
+                        {code: "CUSTOM_KEYWORD_STRING_LIMIT", configuration: "BIOVALIDATOR_CUSTOM_KEYWORD_STRING_MAX_BYTES"}
+                    );
+                }
+            }
+            if (typeof data === "string" && Buffer.byteLength(data) > this.securityConfig.customKeywordStringMaxBytes) {
+                throw new SecurityLimitError(
+                    `A graphRestriction term exceeded this Biovalidator deployment's ${this.securityConfig.customKeywordStringMaxBytes}-byte limit.`,
+                    {code: "CUSTOM_KEYWORD_STRING_LIMIT", configuration: "BIOVALIDATOR_CUSTOM_KEYWORD_STRING_MAX_BYTES"}
+                );
+            }
 
             if (!parentTerms || !ontologyIds) {
                 throw new ajv.ValidationError([
@@ -104,6 +158,15 @@ class GraphRestriction {
 
             const parentTerm = parentIris.join(",");
             const ontologyId = ontologyIds.join(",").replace(/obo:/g, "");
+            for (const [name, value] of [["classes", parentTerm], ["ontologies", ontologyId]]) {
+                if (Buffer.byteLength(value) > this.securityConfig.customKeywordStringMaxBytes) {
+                    throw new SecurityLimitError(
+                        `The combined graphRestriction.${name} query exceeded this Biovalidator deployment's ` +
+                        `${this.securityConfig.customKeywordStringMaxBytes}-byte limit.`,
+                        {code: "CUSTOM_KEYWORD_STRING_LIMIT", configuration: "BIOVALIDATOR_CUSTOM_KEYWORD_STRING_MAX_BYTES"}
+                    );
+                }
+            }
 
             try {
                 await this.olsClient.resolveUniqueIri(data, queryFields, {

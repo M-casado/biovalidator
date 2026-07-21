@@ -1,10 +1,10 @@
 const {OlsSearchClient} = require("./ols_search_client");
 
 class CurieExpansion {
-    constructor(olsSearchUrl) {
+    constructor(olsSearchUrl, options = {}) {
         const constants = require('../utils/constants');
         this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
-        this.olsClient = new OlsSearchClient(this.olsSearchUrl);
+        this.olsClient = new OlsSearchClient(this.olsSearchUrl, options);
     }
 
     static isCurie(term) {

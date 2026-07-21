@@ -1,9 +1,12 @@
 const axios = require("axios");
 const {olsCache} = require("../keywords/shared-cache");
 const constants = require("./constants");
+const {loadSecurityConfig} = require("./security-config");
+const {SecureHttpClient} = require("./secure-http-client");
+const SecurityLimitError = require("../model/security-limit-error");
 
 const PAGE_SIZE = 500;
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 20000;
 const OMITTED_SERVER_FILTERS = new Set(["groupField", "queryFields"]);
 
 class OlsSearchError extends Error {
@@ -27,15 +30,22 @@ class OlsResolutionError extends Error {
 }
 
 class OlsSearchClient {
-    constructor(searchUrl) {
+    constructor(searchUrl, options = {}) {
         this.searchUrl = searchUrl || constants.OLS_SEARCH_URL;
+        this.securityConfig = options.securityConfig || loadSecurityConfig();
+        this.sharedCacheEnabled = options.securityProfile !== "server";
+        this.httpClient = options.httpClient || new SecureHttpClient({
+            config: this.securityConfig,
+            securityProfile: options.securityProfile || "compatible",
+            adapter: options.adapter || axios
+        });
     }
 
     async search(term, filters = {}) {
         const baseUrl = this._buildUrl(term, filters);
         const cacheKey = `ols-search:${baseUrl.toString()}`;
 
-        if (olsCache.has(cacheKey)) {
+        if (this.sharedCacheEnabled && olsCache.has(cacheKey)) {
             return olsCache.get(cacheKey);
         }
 
@@ -70,7 +80,9 @@ class OlsSearchClient {
         } while (docs.length < expectedTotal);
 
         const result = {docs, numFound: expectedTotal};
-        olsCache.set(cacheKey, result);
+        if (this.sharedCacheEnabled) {
+            olsCache.set(cacheKey, result);
+        }
         return result;
     }
 
@@ -133,13 +145,15 @@ class OlsSearchClient {
     async _fetchPage(term, url, requestedStart) {
         let response;
         try {
-            response = await axios({
-                method: "GET",
-                url: url.toString(),
-                responseType: "json",
-                timeout: REQUEST_TIMEOUT_MS
+            response = await this.httpClient.getJson(url.toString(), {
+                kind: "ols",
+                maxBytes: this.securityConfig.apiResponseMaxBytes,
+                cache: true
             });
         } catch (error) {
+            if (error instanceof SecurityLimitError || error && error.name === "SecurityLimitError") {
+                throw error;
+            }
             const status = error.response && error.response.status;
             const responseMessage = error.response && error.response.data &&
                 (error.response.data.errorMessage || error.response.data.message);

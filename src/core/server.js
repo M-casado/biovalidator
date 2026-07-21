@@ -1,9 +1,12 @@
 const express = require("express");
-const bodyParser = require("body-parser");
 const {logger, addLogDirectory} = require("../utils/winston");
 const AppError = require("../model/application-error");
+const SecurityLimitError = require("../model/security-limit-error");
 const BioValidator = require("./biovalidator-core")
+const ValidationPool = require("./validation-pool");
 const {FegaExamplesClient} = require("../utils/fega_examples_client");
+const {loadSecurityConfig} = require("../utils/security-config");
+const {SecureHttpClient} = require("../utils/secure-http-client");
 const npid = require("npid");
 const path = require("path");
 const childProcess = require("child_process");
@@ -76,9 +79,29 @@ function resolveDeploymentMetadata(
 }
 
 class BioValidatorServer {
-  constructor(port, localSchemaPath) {
-    this.biovalidator = new BioValidator(localSchemaPath)
-    this.fegaExamplesClient = new FegaExamplesClient();
+  constructor(port, localSchemaPath, options = {}) {
+    this.securityConfig = options.securityConfig || loadSecurityConfig();
+    this.securityProfile = options.securityProfile || (process.env.NODE_ENV === "test" ? "compatible" : "server");
+    this.httpClient = options.httpClient || new SecureHttpClient({
+      config: this.securityConfig,
+      securityProfile: this.securityProfile
+    });
+    this.biovalidator = new BioValidator(localSchemaPath, {
+      securityConfig: this.securityConfig,
+      securityProfile: this.securityProfile,
+      httpClient: this.httpClient
+    });
+    this.fegaExamplesClient = new FegaExamplesClient({
+      securityConfig: this.securityConfig,
+      httpClient: this.httpClient
+    });
+    this.validationPool = options.validationPool || (
+      this.securityProfile === "server" && options.disableWorkers !== true && process.env.BIOVALIDATOR_DISABLE_WORKERS !== "true"
+        ? new ValidationPool({localSchemaPath, securityConfig: this.securityConfig, httpClient: this.httpClient})
+        : null
+    );
+    this.lastExamplesRefreshAt = 0;
+    this.remoteRefs = [];
     this.port = port || process.env.BIOVALIDATOR_PORT || 3020;
     this.baseUrl = process.env.BIOVALIDATOR_BASE_URL || '/';
     this.logPath = process.env.BIOVALIDATOR_LOG_DIR || './logs';
@@ -113,40 +136,69 @@ class BioValidatorServer {
     return this;
   }
 
+  withRemoteRefs(remoteRefs) {
+    this.remoteRefs = Array.isArray(remoteRefs) ? remoteRefs : (remoteRefs ? [remoteRefs] : []);
+    return this;
+  }
+
   start() {
     this._configureServer()
-        ._configureEndpoints()
-        ._startServer()
-        ._registerHooks();
+        ._configureEndpoints();
+    this.biovalidator.preloadRemoteSchemas(this.remoteRefs).then(() => {
+      this._startServer()._registerHooks();
+    }).catch((error) => {
+      logger.error(`Failed to preload configured remote schemas: ${error.message || error}`);
+      process.exitCode = 1;
+    });
+    return this;
   }
 
   _configureServer() {
     addLogDirectory(this.logPath);
 
     this.app = express();
+    this.app.disable("x-powered-by");
     this.router = express.Router();
     this.router.use(express.static(path.join(__dirname, "..", "views")));
 
     // Mount before the JSON parser so malformed POST bodies are counted too.
     this.app.use(this.baseUrl, this._trackValidationRequest.bind(this));
 
-    this.app.use(express.json({limit:'1mb'}));
-
     this.app.use(function(req, res, next) {
       res.header("Access-Control-Allow-Origin", "*");
       res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+      res.header("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'");
+      res.header("Cross-Origin-Opener-Policy", "same-origin");
+      res.header("Permissions-Policy", "camera=(), geolocation=(), microphone=()");
+      res.header("Referrer-Policy", "no-referrer");
+      res.header("X-Content-Type-Options", "nosniff");
+      res.header("X-Frame-Options", "DENY");
       next();
     });
 
-    this.app.use(function (err, req, res, next) {
-      if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    this.app.use(express.json({limit: this.securityConfig.requestMaxBytes, strict: true}));
+
+    this.app.use((err, req, res, next) => {
+      if (err && err.type === "entity.too.large") {
+        const limitError = new SecurityLimitError(
+          `The request body exceeded this Biovalidator deployment's ${this.securityConfig.requestMaxBytes}-byte limit.`,
+          {
+            code: "REQUEST_BODY_SIZE_LIMIT",
+            status: 413,
+            configuration: "BIOVALIDATOR_REQUEST_MAX_BYTES",
+            limit: {name: "request_max_bytes", configured: this.securityConfig.requestMaxBytes,
+              observed: Number(req.headers["content-length"]) || undefined, unit: "bytes"}
+          }
+        );
+        res.status(413).send(limitError);
+      } else if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
         let appError = new AppError("Received malformed JSON.");
         logger.log("info", appError.error);
         res.status(400).send(appError);
       } else {
         let appError = new AppError(err.message);
         logger.log("error", appError.error);
-        res.status(err.status).send(appError);
+        res.status(err.status || 500).send(appError);
       }
     });
 
@@ -199,6 +251,10 @@ class BioValidatorServer {
   _configureEndpoints() {
     this.router.post("/validate", (req, res) => {
       let startTime = new Date().getTime();
+      if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+        res.status(400).send(new AppError("Malformed data. The request body must be a JSON object."));
+        return;
+      }
       let inputSchema = req.body.schema;
       let inputObject = req.body.data;
 
@@ -206,12 +262,14 @@ class BioValidatorServer {
       const hasData = Object.prototype.hasOwnProperty.call(req.body, "data");
 
       if (hasSchema && hasData) {
-        this.biovalidator.validate(inputSchema, inputObject).then((output) => {
+        const executor = this.validationPool || this.biovalidator;
+        executor.validate(inputSchema, inputObject).then((output) => {
           res.locals.validationResult = output.length === 0 ? "valid" : "invalid";
           res.status(200).send(output);
           logger.info("New validation request: Processed successfully in " + (new Date().getTime() - startTime) + "ms.");
         }).catch((error) => {
-          res.status(500).send(error);
+          const status = error instanceof SecurityLimitError ? error.status : (error.status || 500);
+          res.status(status).send(typeof error.toJSON === "function" ? error.toJSON() : error);
           logger.error("New validation request: Server failed to process data: " + JSON.stringify(error));
         });
       } else {
@@ -244,11 +302,30 @@ class BioValidatorServer {
 
     this.router.get("/examples", (req, res) => {
       if (req.query.refresh === "true") {
+        const now = Date.now();
+        if (now - this.lastExamplesRefreshAt < this.securityConfig.examplesRefreshMinIntervalMs) {
+          const error = new SecurityLimitError(
+            `FEGA example refresh is limited to once every ${this.securityConfig.examplesRefreshMinIntervalMs}ms by this Biovalidator deployment.`,
+            {
+              code: "EXAMPLES_REFRESH_RATE_LIMIT",
+              status: 429,
+              configuration: "BIOVALIDATOR_EXAMPLES_REFRESH_MIN_INTERVAL_MS"
+            }
+          );
+          res.status(error.status).send(error);
+          return;
+        }
+        this.lastExamplesRefreshAt = now;
         this.fegaExamplesClient.clearCache();
       }
       this.fegaExamplesClient.getExamples().then((examples) => {
         res.status(200).send(examples);
       }).catch((error) => {
+        if (error instanceof SecurityLimitError) {
+          logger.error(error.message);
+          res.status(error.status).send(error);
+          return;
+        }
         const appError = new AppError("Failed to load FEGA examples. " + (error.message || error));
         logger.error(appError.error);
         res.status(502).send(appError);
@@ -258,7 +335,9 @@ class BioValidatorServer {
     this.router.get("/cache", (req, res) => {
       res.send({
         schemas: this.biovalidator.getSchemaInventory(),
-        api: getApiCacheDetails()
+        worker_schemas: this.validationPool ? this.validationPool.getSchemaInventory() : undefined,
+        api: getApiCacheDetails(),
+        outbound: this.httpClient.snapshot()
       });
     });
 
@@ -277,10 +356,15 @@ class BioValidatorServer {
       const cleared = [];
       if (scope === "all" || scope === "schemas") {
         this.biovalidator.clearSchemaCaches();
+        if (this.validationPool) {
+          this.validationPool.clearSchemaCaches();
+        }
+        this.httpClient.clear("schemas");
         cleared.push("schemas");
       }
       if (scope === "all" || scope === "api") {
         clearApiCaches();
+        this.httpClient.clear("api");
         cleared.push("api");
       }
 
@@ -319,8 +403,10 @@ class BioValidatorServer {
       },
       cache: {
         schemas: this.biovalidator.getSchemaCacheDetails(),
-        api: getApiCacheDetails()
-      }
+        api: getApiCacheDetails(),
+        outbound: this.httpClient.snapshot()
+      },
+      validation_capacity: this.validationPool ? this.validationPool.getDetails() : null
     };
   }
 
@@ -355,12 +441,18 @@ class BioValidatorServer {
     // Handles crt + c event
     process.on("SIGINT", () => {
       npid.remove(this.pidPath);
+      if (this.validationPool) {
+        this.validationPool.close();
+      }
       process.exit();
     });
 
     // Handles kill -USR1 pid event
     process.on("SIGUSR1", () => {
       npid.remove(this.pidPath);
+      if (this.validationPool) {
+        this.validationPool.close();
+      }
       process.exit();
     });
   }

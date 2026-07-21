@@ -15,12 +15,22 @@ spec:
       labels:
         app: biovalidator
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       imagePullSecrets:
         - name: $DOCKER_PULL_SECRET
       containers:
         - name: biovalidator
           image: $DOCKER_IMAGE_NAME
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
           ports:
             - containerPort: 3020
           args:
@@ -43,6 +53,12 @@ spec:
               value: $HTTP_PROXY
             - name: no_proxy
               value: $NO_PROXY
+          volumeMounts:
+            - name: runtime-tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime-tmp
+          emptyDir: {}
 
 ---
 apiVersion: v1

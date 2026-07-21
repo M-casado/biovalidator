@@ -90,7 +90,7 @@ The biovalidator also exposes an endpoint for validation: [http://localhost:3020
 | `GET`, `DELETE` | `/cache` | Inspect schema/API cache state or clear transient caches. |
 | `GET` | `/health` | Inspect process, validation, and cache health metrics. |
 
-See the concise [HTTP API reference](docs/api.md) for parameters and response semantics.
+See the concise [HTTP API reference](docs/api.md) for response semantics and [server security controls](docs/security.md) for outbound policy, worker isolation, cache behavior, and configurable limits.
 
 The `/validate` POST endpoint accepts JSON as data and has the following structure.
 ```json
@@ -178,7 +178,7 @@ export BIOVALIDATOR_LOG_DIR=./new_log_dir
 ```
 
 ### Interacting with biovalidator cache
-In server mode, Biovalidator caches compiled validators, remotely referenced schemas, and responses from external APIs. `GET /cache` reports the schema inventory and API cache metrics without exposing API cache keys. `DELETE /cache` clears transient entries and accepts `scope=schemas`, `scope=api`, or `scope=all` (the default). Local schemas registered with `--ref` are configuration and are not removed.
+In server mode, Biovalidator caches compiled validators, remotely referenced schemas, and responses from external APIs. Remote/API response caches are shared across users and validation workers, they are not recreated per request. `GET /cache` reports schema inventories, bounded-cache metrics, and remote URL keys without exposing API query keys or cached bodies. `DELETE /cache` clears transient entries and accepts `scope=schemas`, `scope=api`, or `scope=all` (the default). Local schemas registered with `--ref` are configuration and are not removed.
 
 Transient schema and validation API cache entries expire after six hours by default. Set `BIOVALIDATOR_CACHE_TTL_SECONDS` to a positive whole number of seconds to change the lifetime. The setting is read at process startup, so changing it requires a restart. For example, use `3600` for one hour or `86400` for one day. The FEGA examples cache has its own `FEGA_EXAMPLES_CACHE_TTL_SECONDS` setting.
 
@@ -202,6 +202,7 @@ Options:
   -s, --schema   path to the schema file.
   -d, --data     path to the data file.
   -r, --ref      path to referenced schema directory/file/glob pattern.
+      --remoteRef allowlisted remote schema URL to warm at server startup; repeatable.
   -p, --port     exposed port in server mode. Only valid in server mode.
 
 Examples:
@@ -219,6 +220,12 @@ When parsing glob patterns, it is better to wrap with `'` to avoid parsing them 
 ```
 node src/biovalidator --ref=/path/to/reference/schema/dir/*.json
 node src/biovalidator --ref '/path/to/reference/schema/dir/*.json'
+```
+
+- `--remoteRef`:
+In server mode, repeat this option to fetch and compile important allowlisted remote schemas before the listener starts. This preserves `$id` lookup and warms the shared remote response cache.
+```shell
+node src/biovalidator --remoteRef https://raw.githubusercontent.com/M-casado/fega-metadata-schema/main/schemas/common/schema.json
 ```
 
 - `--port`:

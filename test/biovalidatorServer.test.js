@@ -15,6 +15,7 @@ const {
 const BioValidatorServer = require('../src/core/server');
 const {resolveDeploymentMetadata, resolveDependencyVersions} = BioValidatorServer;
 const supertest = require('supertest');
+const {loadSecurityConfig} = require('../src/utils/security-config');
 const server = new BioValidatorServer("3020", "");
 server._configureServer()._configureEndpoints();
 const requestWithSupertest = supertest(server.app);
@@ -49,6 +50,30 @@ describe('biovalidator server endpoints', () => {
     expect(res.text).toContain('id="fetch-examples"');
     expect(res.text).toContain('id="load-example"');
     expect(res.text).toContain('FEGA metadata technical report');
+    expect(res.headers['x-powered-by']).toBeUndefined();
+    expect(res.headers['content-security-policy']).toContain("default-src 'self'");
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+  });
+
+  it('returns an informative Biovalidator limit response for oversized JSON bodies', async () => {
+    const limitedServer = new BioValidatorServer("3028", "", {
+      securityProfile: 'compatible',
+      disableWorkers: true,
+      securityConfig: {...loadSecurityConfig({}), requestMaxBytes: 128}
+    });
+    limitedServer._configureServer()._configureEndpoints();
+
+    const res = await supertest(limitedServer.app).post('/validate').send({
+      schema: {type: 'string'},
+      data: 'x'.repeat(256)
+    });
+
+    expect(res.status).toBe(413);
+    expect(res.body).toMatchObject({
+      code: 'REQUEST_BODY_SIZE_LIMIT',
+      configuration: 'BIOVALIDATOR_REQUEST_MAX_BYTES',
+      help: expect.stringContaining('Deploy Biovalidator locally')
+    });
   });
 
   it('GET / should serve the self-hosted browser assets', async () => {
@@ -208,7 +233,7 @@ describe('biovalidator server endpoints', () => {
     expect(axios).toHaveBeenCalledTimes(2);
   });
 
-  it('GET /examples refresh=true bypasses the FEGA examples cache', async () => {
+  it('GET /examples refresh=true bypasses the cache and rate-limits repeated refreshes', async () => {
     axios.mockImplementation((config) => {
       if (config.url.includes('/git/trees/')) {
         return Promise.resolve({
@@ -230,10 +255,14 @@ describe('biovalidator server endpoints', () => {
       });
     });
 
-    await requestWithSupertest.get('/examples?refresh=true');
-    await requestWithSupertest.get('/examples?refresh=true');
+    const first = await requestWithSupertest.get('/examples?refresh=true');
+    const second = await requestWithSupertest.get('/examples?refresh=true');
 
-    expect(axios).toHaveBeenCalledTimes(4);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(second.body.code).toBe('EXAMPLES_REFRESH_RATE_LIMIT');
+    expect(second.body.help).toContain('Deploy Biovalidator locally');
+    expect(axios).toHaveBeenCalledTimes(2);
   });
 
   it('GET /examples returns controlled error when upstream fetch fails', async () => {

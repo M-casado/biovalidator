@@ -12,9 +12,11 @@ const argv = yargs(hideBin(process.argv))
     .alias('d', 'data')
     .alias('r', 'ref')
     .alias('p', 'port')
+    .array('remoteRef')
     .describe('schema', 'path to the schema file.')
     .describe('data', 'path to the data file.')
     .describe('ref', 'path, directory, or glob of local $ref schemas; each schema must have a unique $id.')
+    .describe('remoteRef', 'allowlisted remote schema URL to fetch and warm before accepting server traffic; repeatable.')
     .describe('port', 'exposed port in server mode. Only valid in server mode.')
     .describe('baseUrl', 'base URL for the server. Only valid in server mode.')
     .describe('pidPath', 'PID file name and path. Only valid in server mode.')
@@ -31,6 +33,7 @@ let port = argv["port"]
 let baseUrl = argv["baseUrl"]
 let pidPath = argv["pidPath"]
 let logDir = argv["logDir"]
+let remoteRefs = argv["remoteRef"]
 
 if (help) {
     _printHelp();
@@ -41,6 +44,7 @@ if (help) {
     new BioValidatorCli(schema, data, schemaRef).validate();
 } else {
     new BioValidatorServer(port, schemaRef)
+        .withRemoteRefs(remoteRefs)
         .withBaseUrl(baseUrl)
         .withPid(pidPath)
         .withLogDir(logDir)

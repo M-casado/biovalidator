@@ -45,7 +45,7 @@ describe("OlsSearchClient", () => {
         expect(requestedUrl.searchParams.get("q")).toBe("BFO:0000040");
         expect(requestedUrl.searchParams.get("groupField")).toBeNull();
         expect(requestedUrl.searchParams.get("queryFields")).toBeNull();
-        expect(request.timeout).toBe(30000);
+        expect(request.timeout).toBe(20000);
     });
 
     test("fetches every page and caches only the completed aggregate", async () => {

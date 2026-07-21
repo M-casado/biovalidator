@@ -3,13 +3,23 @@ const axios = require("axios");
 const {logger} = require("../utils/winston");
 const CustomAjvError = require("../model/custom-ajv-error");
 const {default: ajv} = require("ajv");
+const SecurityLimitError = require("../model/security-limit-error");
+const {loadSecurityConfig} = require("../utils/security-config");
+const {SecureHttpClient} = require("../utils/secure-http-client");
 
 const taxonomySearchUrl = "https://www.ebi.ac.uk/ena/taxonomy/rest/any-name";
 const NoResults = "No results.";
 
 class IsValidTaxonomy {
-    constructor(keywordName) {
+    constructor(keywordName, options = {}) {
         this.keywordName = keywordName ? keywordName : "isValidTaxonomy";
+        this.securityConfig = options.securityConfig || loadSecurityConfig();
+        this.sharedCacheEnabled = options.securityProfile !== "server";
+        this.httpClient = options.httpClient || new SecureHttpClient({
+            config: this.securityConfig,
+            securityProfile: options.securityProfile || "compatible",
+            adapter: options.adapter || axios
+        });
     }
 
     configure(ajv) {
@@ -18,7 +28,9 @@ class IsValidTaxonomy {
             async: this.isAsync(),
             type: "string",
             validate: this.generateKeywordFunction(),
-            errors: true
+            errors: true,
+            schemaType: ["boolean", "string"],
+            metaSchema: {anyOf: [{type: "boolean"}, {enum: ["true", "false"]}]}
         };
 
         return ajv.addKeyword(keywordDefinition);
@@ -38,26 +50,43 @@ class IsValidTaxonomy {
             return new Promise((resolve, reject) => {
                 if (schema) {
                     let errors = [];
+                    let fatalError = null;
 
                     const taxonomyExpression = data;
+                    const observedBytes = Buffer.byteLength(taxonomyExpression);
+                    if (observedBytes > this.securityConfig.customKeywordStringMaxBytes) {
+                        reject(new SecurityLimitError(
+                            `An ENA taxonomy query exceeded this Biovalidator deployment's ${this.securityConfig.customKeywordStringMaxBytes}-byte limit.`,
+                            {
+                                code: "CUSTOM_KEYWORD_STRING_LIMIT",
+                                configuration: "BIOVALIDATOR_CUSTOM_KEYWORD_STRING_MAX_BYTES",
+                                limit: {name: "custom_keyword_string_max_bytes", configured: this.securityConfig.customKeywordStringMaxBytes, observed: observedBytes, unit: "bytes"}
+                            }
+                        ));
+                        return;
+                    }
                     const encodedTaxonomyUri = encodeURIComponent(taxonomyExpression);
                     const url = [taxonomySearchUrl, encodedTaxonomyUri].join("/");
 
                     logger.log("debug", `Looking for taxonomy [${taxonomyExpression}] with ENA taxonomy validator.`);
 
-                    const cacheHit = enaTaxonomyCache.has(url);
+                    const cacheHit = this.sharedCacheEnabled && enaTaxonomyCache.has(url);
                     let taxonomyPromise;
                     if (cacheHit) {
                         taxonomyPromise = Promise.resolve(enaTaxonomyCache.get(url));
                         logger.debug("Returning cached response for ENA taxonomy request: " + url);
                     } else {
-                        taxonomyPromise = axios({method: "GET", url: url, responseType: 'json'});
+                        taxonomyPromise = this.httpClient.getJson(url, {
+                            kind: "ena",
+                            maxBytes: this.securityConfig.apiResponseMaxBytes,
+                            cache: true
+                        });
                     }
 
                     taxonomyPromise
                         .then((response) => {
                             if (response.status === 200 && response.data) {
-                                if (!cacheHit) {
+                                if (this.sharedCacheEnabled && !cacheHit) {
                                     // Store successful upstream responses without extending TTL on cache hits.
                                     enaTaxonomyCache.set(url, response);
                                 }
@@ -86,6 +115,10 @@ class IsValidTaxonomy {
 
                         })
                         .catch((error) => {
+                            if (error instanceof SecurityLimitError || error && error.name === "SecurityLimitError") {
+                                fatalError = error;
+                                return;
+                            }
                             logger.error(`Failed to resolve taxonomy. [${error.response && error.response.data && error.response.data.errorMessage ? error.response.data.errorMessage : error}]`);
                             errors.push(new CustomAjvError(
                                 "isValidTaxonomy", "Something went wrong while validating term, try again." + (error.response && error.response.data && error.response.data.errorMessage ? error.response.data.errorMessage : ''),
@@ -93,7 +126,9 @@ class IsValidTaxonomy {
                             );
                         })
                         .finally(() => {
-                            if (errors.length > 0) {
+                            if (fatalError) {
+                                reject(fatalError);
+                            } else if (errors.length > 0) {
                                 reject(new ajv.ValidationError(errors));
                             } else {
                                 resolve(true);

@@ -5,13 +5,16 @@ const {
     OlsSearchClient,
     OlsResolutionError
 } = require("../utils/ols_search_client");
+const SecurityLimitError = require("../model/security-limit-error");
+const {loadSecurityConfig} = require("../utils/security-config");
 
 class IsChildTermOf {
-    constructor(keywordName, olsSearchUrl) {
+    constructor(keywordName, olsSearchUrl, options = {}) {
         const constants = require('../utils/constants');
         this.keywordName = keywordName ? keywordName : "isChildTermOf";
         this.olsSearchUrl = olsSearchUrl || constants.OLS_SEARCH_URL;
-        this.olsClient = new OlsSearchClient(this.olsSearchUrl);
+        this.securityConfig = options.securityConfig || loadSecurityConfig();
+        this.olsClient = new OlsSearchClient(this.olsSearchUrl, options);
     }
 
     configure(ajv) {
@@ -20,7 +23,17 @@ class IsChildTermOf {
             async: this.isAsync(),
             type: "string",
             validate: this.generateKeywordFunction(),
-            errors: true
+            errors: true,
+            schemaType: "object",
+            metaSchema: {
+                type: "object",
+                additionalProperties: false,
+                required: ["parentTerm", "ontologyId"],
+                properties: {
+                    parentTerm: {type: "string", minLength: 1},
+                    ontologyId: {type: "string", minLength: 1}
+                }
+            }
         };
 
         return ajv.addKeyword(keywordDefinition);
@@ -38,6 +51,18 @@ class IsChildTermOf {
         return async (schema, data) => {
             const parentTerm = schema.parentTerm;
             const ontologyId = schema.ontologyId;
+
+            for (const value of [data, parentTerm, ontologyId]) {
+                if (typeof value === "string" && Buffer.byteLength(value) > this.securityConfig.customKeywordStringMaxBytes) {
+                    throw new SecurityLimitError(
+                        `An isChildTermOf value exceeded this Biovalidator deployment's ${this.securityConfig.customKeywordStringMaxBytes}-byte limit.`,
+                        {
+                            code: "CUSTOM_KEYWORD_STRING_LIMIT",
+                            configuration: "BIOVALIDATOR_CUSTOM_KEYWORD_STRING_MAX_BYTES"
+                        }
+                    );
+                }
+            }
 
             if (!parentTerm || !ontologyId) {
                 logger.error("Failed to resolve relationship from OLS. Missing required variable in schema isChildTermOf, required properties are: parentTerm and ontologyId");

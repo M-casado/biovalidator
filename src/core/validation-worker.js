@@ -1,0 +1,98 @@
+"use strict";
+
+const {parentPort, workerData} = require("worker_threads");
+const BioValidator = require("./biovalidator-core");
+const SecurityLimitError = require("../model/security-limit-error");
+
+class ParentHttpClient {
+    constructor() {
+        this.sequence = 0;
+        this.pending = new Map();
+        parentPort.on("message", (message) => {
+            if (!message || message.type !== "outboundResult") {
+                return;
+            }
+            const pending = this.pending.get(message.requestId);
+            if (!pending) {
+                return;
+            }
+            this.pending.delete(message.requestId);
+            if (message.error) {
+                const error = message.error.name === "SecurityLimitError"
+                    ? new SecurityLimitError(message.error.message, message.error)
+                    : Object.assign(new Error(message.error.message), message.error);
+                pending.reject(error);
+            } else {
+                pending.resolve(message.response);
+            }
+        });
+    }
+
+    getJson(url, options = {}) {
+        const requestId = ++this.sequence;
+        return new Promise((resolve, reject) => {
+            this.pending.set(requestId, {resolve, reject});
+            parentPort.postMessage({
+                type: "outbound",
+                requestId,
+                url,
+                options: {
+                    kind: options.kind,
+                    maxBytes: options.maxBytes,
+                    cache: options.cache
+                }
+            });
+        });
+    }
+}
+
+function serializeError(error) {
+    const serialized = {
+        name: error && error.name,
+        message: error && (error.message || error.error) || "Validation failed"
+    };
+    for (const key of ["code", "status", "limit", "configuration", "help", "error"]) {
+        if (error && error[key] !== undefined) {
+            serialized[key] = error[key];
+        }
+    }
+    return serialized;
+}
+
+const validator = new BioValidator(workerData.localSchemaPath, {
+    securityProfile: "server",
+    securityConfig: workerData.securityConfig,
+    httpClient: new ParentHttpClient()
+});
+
+parentPort.on("message", async (message) => {
+    if (!message) {
+        return;
+    }
+    if (message.type === "clearCaches") {
+        validator.clearSchemaCaches();
+        parentPort.postMessage({type: "cacheCleared", inventory: validator.getSchemaInventory()});
+        return;
+    }
+    if (message.type !== "validate") {
+        return;
+    }
+    try {
+        const result = await validator.validate(message.schema, message.data);
+        parentPort.postMessage({
+            type: "validationResult",
+            jobId: message.jobId,
+            result,
+            inventory: validator.getSchemaInventory()
+        });
+    } catch (error) {
+        parentPort.postMessage({
+            type: "validationResult",
+            jobId: message.jobId,
+            error: serializeError(error),
+            inventory: validator.getSchemaInventory()
+        });
+    }
+});
+
+parentPort.postMessage({type: "ready", inventory: validator.getSchemaInventory()});

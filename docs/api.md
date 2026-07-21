@@ -14,11 +14,11 @@ The default base URL is `http://localhost:3020/`. `BIOVALIDATOR_BASE_URL` may ad
 
 ## Validation
 
-`POST /validate` accepts an object with required `schema` and `data` properties. A `200` response contains an empty array when the data is valid, or validation errors when it is invalid. Malformed requests return `400`; processing failures return `500`.
+`POST /validate` accepts an object with required `schema` and `data` properties. A `200` response contains an empty array when the data is valid, or validation errors when it is invalid. Malformed requests return `400`. Security and capacity rejections use `413`, `422`, `429`, `502`, `503`, or `504` as appropriate and contain `code`, `configuration`, and local-deployment guidance. See [server security controls](security.md).
 
 ## Cache
 
-`GET /cache` groups schema state under `schemas.registered`, `schemas.validatorID`, and `schemas.referenced`. Registered schemas come from `--ref`; `validatorID` lists cached top-level schemas by `$id`; referenced schemas were fetched remotely. The `api` object reports per-provider counts, TTL, and lifecycle timestamps without exposing cache keys.
+`GET /cache` groups in-process schema state under `schemas.registered`, `schemas.validatorID`, and `schemas.referenced`; `worker_schemas` reports the union observed in validation workers. Registered schemas come from `--ref`; `validatorID` lists cached top-level schema labels; referenced schemas were fetched remotely. `outbound` reports bounded shared-cache weights and remote URL inventory. The legacy `api` object reports per-provider counts, TTL, and lifecycle timestamps without exposing API query keys.
 
 `DELETE /cache` clears transient schema and/or API caches. Registered local schemas remain available because they are server configuration rather than cache entries.
 
@@ -43,7 +43,7 @@ The default base URL is `http://localhost:3020/`. `BIOVALIDATOR_BASE_URL` may ad
 | `ttl_seconds` | Configured lifetime for entries in that cache. |
 | `last_updated_at`, `last_cleared_at` | Last observed cache write and clear times; `null` before that event occurs. |
 
-The schema and validation API cache lifetime defaults to 21,600 seconds. Deployments can set `BIOVALIDATOR_CACHE_TTL_SECONDS` to a positive whole number of seconds; the effective value appears in `ttl_seconds`. Configuration is read at process startup. FEGA examples use the separate `FEGA_EXAMPLES_CACHE_TTL_SECONDS` setting.
+The schema and validation API cache lifetime defaults to 21,600 seconds (6 hours). Deployments can set `BIOVALIDATOR_CACHE_TTL_SECONDS` to a positive whole number of seconds; the effective value appears in `ttl_seconds`. Configuration is read at process startup. FEGA examples use the separate `FEGA_EXAMPLES_CACHE_TTL_SECONDS` setting, and forced refreshes are rate limited by `BIOVALIDATOR_EXAMPLES_REFRESH_MIN_INTERVAL_MS`.
 | `oldest_entry_at`, `newest_entry_at` | Estimated insertion boundaries for current entries; `null` when empty. |
 | `next_expiration_at` | Earliest scheduled expiration among current entries; `null` when none exists. |
 
