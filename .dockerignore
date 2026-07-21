@@ -1,3 +1,9 @@
 node_modules
 npm-debug.log
 examples
+.git
+.github
+logs
+server.pid
+test
+*.log

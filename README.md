@@ -63,6 +63,8 @@ git clone https://github.com/elixir-europe/biovalidator.git
 cd biovalidator
 npm install
 ```
+The browser interface is distributed with pinned, self-hosted assets, so it does not need a CDN or other network access for its editor, styles, scripts, or logo. Maintainers should run `npm run build:ui` after changing files in `src/browser`; the Docker build also regenerates these assets before pruning build-only dependencies.
+
 - Run test cases to see everything is in order
 ```
 npm test

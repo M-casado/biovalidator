@@ -202,7 +202,10 @@ class BioValidatorServer {
       let inputSchema = req.body.schema;
       let inputObject = req.body.data;
 
-      if (inputSchema && inputObject) {
+      const hasSchema = Object.prototype.hasOwnProperty.call(req.body, "schema");
+      const hasData = Object.prototype.hasOwnProperty.call(req.body, "data");
+
+      if (hasSchema && hasData) {
         this.biovalidator.validate(inputSchema, inputObject).then((output) => {
           res.locals.validationResult = output.length === 0 ? "valid" : "invalid";
           res.status(200).send(output);

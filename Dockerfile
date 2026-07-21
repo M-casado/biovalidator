@@ -3,12 +3,11 @@ FROM node:18-buster
 # Create app directory
 WORKDIR /usr/src/app
 
-COPY package*.json ./
+COPY . .
 COPY ./start.sh /
 
-RUN npm install
-
-# Bundle app source
-COPY . .
+# Rebuild the checked-in browser assets in the Linux image, then remove the
+# build-only dependencies so they do not add weight to the runtime image.
+RUN npm install && npm run build:ui && npm prune --omit=dev
 
 ENTRYPOINT ["/start.sh"]

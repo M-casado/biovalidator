@@ -1,319 +1,94 @@
-<!DOCTYPE html>
-<!--[if lt IE 7]>
-<html class="lt-ie9 lt-ie8 lt-ie7" lang="en" dir="ltr"><![endif]-->
-<!--[if IE 7]>
-<html class="lt-ie9 lt-ie8" lang="en" dir="ltr"><![endif]-->
-<!--[if IE 8]>
-<html class="lt-ie9" lang="en" dir="ltr"><![endif]-->
-<!--[if gt IE 8]><!-->
-<html dir="ltr" lang="en"
-    prefix="content: http://purl.org/rss/1.0/modules/content/ dc: http://purl.org/dc/terms/ foaf: http://xmlns.com/foaf/0.1/ og: http://ogp.me/ns# rdfs: http://www.w3.org/2000/01/rdf-schema# sioc: http://rdfs.org/sioc/ns# sioct: http://rdfs.org/sioc/types# skos: http://www.w3.org/2004/02/skos/core# xsd: http://www.w3.org/2001/XMLSchema#">
-<!--<![endif]-->
-
+<!doctype html>
+<html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <link href="/home" rel="canonical" />
-    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-    <meta content="width" name="MobileOptimized" />
-    <meta content="1" name="HandheldFriendly" />
-    <meta content="yes" name="apple-mobile-web-app-capable" />
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>EGA Biovalidator endpoint</title>
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0/dist/css/bootstrap.min.css" rel="stylesheet"
-        integrity="sha384-wEmeIV1mKuiNpC+IOBjI7aAzPcEZeedi5yW5f2yOq55WWLwNGmvvx4Um1vskeMj0" crossorigin="anonymous">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0/dist/js/bootstrap.min.js"
-        integrity="sha384-lpyLfhYuitXl2zRZ5Bn2fqnhNAKOAaM/0Kr9laMspuaMiZfGmfwRNFh8HlMy49eQ"
-        crossorigin="anonymous"></script>
-    <style>
-        .container {
-            max-width: 960px;
-        }
-        .brand-logo {
-            width: 72px;
-            height: 72px;
-            object-fit: contain;
-            margin-bottom: 1rem;
-        }
-        .field-heading {
-            font-size: 0.85rem;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            color: #364152;
-            margin-bottom: 0.5rem;
-        }
-        .result-panel {
-            min-height: 160px;
-        }
-        .docs-panel {
-            border-top: 1px solid #dee2e6;
-            margin-top: 3rem;
-            padding-top: 1.5rem;
-        }
-        .docs-panel h2 {
-            font-size: 1.1rem;
-            margin-bottom: 0.75rem;
-        }
-        .docs-panel p {
-            margin-bottom: 0.75rem;
-        }
-    </style>
+    <link rel="stylesheet" href="assets/ui.min.css">
 </head>
+<body class="bg-light editing-layout">
+<div class="container">
+    <main>
+        <div class="py-5 text-center">
+            <img class="brand-logo" src="assets/ega-logo.png" alt="EGA logo">
+            <h1>EGA Biovalidator endpoint</h1>
+            <p class="lead">
+                Validate FEGA/EGA metadata JSON against JSON Schema using Biovalidator.
+                Minimal valid examples can be fetched from the FEGA metadata schema repository on demand.
+            </p>
+        </div>
 
-<body class="bg-light">
-    <div class="container-fluid">
-            <div class="py-5 text-center">
-                <img class="brand-logo" src="https://avatars.githubusercontent.com/u/20772902?s=280&amp;v=4" alt="EGA logo">
-                <h1>EGA Biovalidator endpoint</h1>
-                <p class="lead">
-                    Validate FEGA/EGA metadata JSON against JSON Schema using Biovalidator.
-                    Minimal valid examples can be fetched from the FEGA metadata schema repository on demand.
-                </p>
+        <div class="mb-3">
+            <div class="input-group">
+                <select class="form-select" id="example-select" aria-label="FEGA minimal valid example">
+                    <option value="">Fetch examples to populate this list</option>
+                </select>
+                <button class="btn btn-outline-secondary" type="button" id="fetch-examples"
+                        data-tooltip="Fetch minimal valid FEGA examples.">Fetch examples</button>
+                <button class="btn btn-outline-secondary" type="button" id="load-example" disabled
+                        data-tooltip="Fetch examples, then select one to load.">Load example</button>
+                <button class="btn btn-primary" type="button" id="validate" disabled
+                        data-tooltip="Check the JSON syntax in both editors before validating.">Validate</button>
             </div>
+            <div class="form-text" id="examples-message" role="status"></div>
+        </div>
+
+        <form class="editors-grid">
             <div class="mb-3">
-                <div class="input-group">
-                    <select class="form-select" id="example-select" aria-label="FEGA minimal valid example">
-                        <option value="">Fetch examples to populate this list</option>
-                    </select>
-                    <button class="btn btn-outline-secondary" id="fetch-examples">Fetch examples</button>
-                    <button class="btn btn-outline-secondary" id="load-example">Load example</button>
-                    <button class="btn btn-primary" type="submit" id="validate">Validate</button>
+                <div class="editor-toolbar">
+                    <label class="field-heading" for="schema-input">Schema</label>
+                    <button class="btn btn-sm btn-outline-secondary" type="button"
+                            data-format-editor="schema" data-tooltip="Enter JSON before formatting."
+                            disabled>Format</button>
                 </div>
-                <div class="form-text" id="examples-message"></div>
+                <textarea class="form-control" id="schema-input" data-json-editor="schema"
+                          placeholder="Enter your JSON Schema here…" rows="12" required></textarea>
+                <div class="editor-host" id="schema-editor"></div>
+                <div class="editor-status text-muted" id="schema-status" role="status" aria-live="polite"></div>
             </div>
 
-
-                <form>
-
-                    <div class="row">
-                    <div class="col-lg-6">
-                        <label class="field-heading" for="input">Schema</label>
-                        <textarea class="form-control" id="input" name="input"
-                                  placeholder="Enter your JSON schema or a URL to your schema here..." rows="12"
-                                  required></textarea>
-                        <div class="invalid-feedback">
-                            Please enter a valid schema in the textarea.
-                        </div>
-                    </div>
-                    <div class="col-lg-6">
-                        <label class="field-heading" for="input2">Data</label>
-                        <div class="input-group has-validation"></div>
-                        <textarea class="form-control" id="input2" name="input2"
-                                  placeholder="Enter JSON instance to validate against the schema..." rows="12"
-                                  required></textarea>
-                        <div class="invalid-feedback">
-                            Please enter valid data in the textarea.
-                        </div>
-                    </div>
-                    </div>
-                </form>
-
-            <div class="row">
-                <div class="col-lg-12">
-                    <div class="field-heading">Validation results</div>
-                    <div class="card result-panel">
-                        <div class="card-body">
-                            <span id="failed" style="display: none;color : red;">INVALID</span>
-                            <span id="valid" style="display: none;color : green;">VALID</span>
-                            <div id="results"></div>
-                        </div>
-                    </div>
+            <div class="mb-3">
+                <div class="editor-toolbar">
+                    <label class="field-heading" for="data-input">Data</label>
+                    <button class="btn btn-sm btn-outline-secondary" type="button"
+                            data-format-editor="data" data-tooltip="Enter JSON before formatting."
+                            disabled>Format</button>
                 </div>
+                <textarea class="form-control" id="data-input" data-json-editor="data"
+                          placeholder="Enter JSON data to validate against the schema…" rows="12" required></textarea>
+                <div class="editor-host" id="data-editor"></div>
+                <div class="editor-status text-muted" id="data-status" role="status" aria-live="polite"></div>
             </div>
-            <section class="docs-panel">
-                <h2>About this endpoint</h2>
-                <p>
-                    This service uses Biovalidator to validate FEGA/EGA metadata JSON against JSON Schema.
-                    Paste a schema and a JSON document, or fetch the current minimal valid examples from the
-                    FEGA metadata schema repository and load one into the editor.
-                </p>
-                <p>
-                    The fetched examples are request wrappers with top-level <code>schema</code> and <code>data</code>
-                    fields. The schema commonly points to the FEGA schema repository with <code>$ref</code>, while the
-                    data field contains the JSON metadata instance that will be validated.
-                </p>
-                <p>
-                    More information is available in the
-                    <a href="https://github.com/elixir-europe/biovalidator" target="_blank" rel="noopener">Biovalidator repository</a>,
-                    the <a href="https://github.com/M-casado/fega-metadata-schema" target="_blank" rel="noopener">FEGA metadata schema repository</a>,
-                    and the <a href="https://github.com/M-casado/fega-metadata-schema/blob/main/docs/FEGA-metadata-technical-report.md" target="_blank" rel="noopener">FEGA metadata technical report</a>.
-                </p>
-            </section>
+        </form>
 
-        <footer class="my-5 text-muted text-center text-small">
-            <p class="mb-1">Apache License 2.0</p>
-        </footer>
-    </div>
+        <div class="field-heading mb-2">Validation results</div>
+        <div class="card result-panel">
+            <div class="card-body">
+                <strong id="failed" class="text-danger" hidden>INVALID</strong>
+                <strong id="valid" class="text-success" hidden>VALID</strong>
+                <div id="results" aria-live="polite"></div>
+            </div>
+        </div>
+
+        <section class="docs-panel">
+            <h2>About this endpoint</h2>
+            <p>
+                This service uses Biovalidator to validate FEGA/EGA metadata JSON against JSON Schema.
+                Paste a schema and a JSON document, or fetch the current minimal valid examples from the
+                FEGA metadata schema repository and load one into the editor.
+            </p>
+            <p>
+                More information is available in the
+                <a href="https://github.com/elixir-europe/biovalidator" target="_blank" rel="noopener">Biovalidator repository</a>,
+                the <a href="https://github.com/M-casado/fega-metadata-schema" target="_blank" rel="noopener">FEGA metadata schema repository</a>,
+                and the <a href="https://github.com/M-casado/fega-metadata-schema/blob/main/docs/FEGA-metadata-technical-report.md" target="_blank" rel="noopener">FEGA metadata technical report</a>.
+            </p>
+        </section>
+    </main>
+    <footer class="my-5 text-muted text-center text-small">
+        <p class="mb-1">Apache License 2.0</p>
+    </footer>
+</div>
+<script src="assets/ui.min.js"></script>
 </body>
-<script>
-
-    function error_report(response) {
-        for (let i = 0; i < response.length; i++) {
-            const dataPath = response[i].dataPath.substr(1);
-            const errors = response[i].errors;
-            let errorStr = "";
-            for (let j = 0; j < errors.length; j++) {
-                if (errorStr.length === 0) {
-                    errorStr = errorStr.concat("<ul>")
-                }
-                errorStr = errorStr.concat("<li>" + errors[j] + "</li>")
-            }
-            if (errorStr.length > 0) {
-                errorStr = errorStr.concat("</ul>")
-            }
-
-            $("#cList").append("<li>" +
-                dataPath + errorStr +
-                "</li>");
-        }
-    }
-
-    $(document).ready(function () {
-
-        $("#results").val("")
-        $("#example-select").prop("disabled", true);
-        $("#load-example").prop("disabled", true);
-        setExamplesMessage("Fetch FEGA examples when you want to load or refresh the list.", false);
-
-        let fegaExamples = [];
-
-        function setExamplesMessage(message, isError) {
-            $("#examples-message")
-                .text(message || "")
-                .toggleClass("text-danger", Boolean(isError))
-                .toggleClass("text-muted", !isError);
-        }
-
-        function populateExamples(payload) {
-            fegaExamples = payload.examples || [];
-            const select = $("#example-select");
-            select.empty();
-
-            if (fegaExamples.length === 0) {
-                select.append($("<option>").val("").text("No FEGA examples available"));
-                select.prop("disabled", true);
-                $("#load-example").prop("disabled", true);
-                setExamplesMessage("No minimal valid FEGA examples were returned.", true);
-                return;
-            }
-
-            fegaExamples.forEach(function (example) {
-                select.append(
-                    $("<option>")
-                        .val(example.id)
-                        .text(example.entity + ": " + example.name)
-                );
-            });
-            select.prop("disabled", false);
-            $("#load-example").prop("disabled", false);
-            setExamplesMessage("Loaded " + fegaExamples.length + " minimal valid FEGA examples.", false);
-        }
-
-        function loadSelectedExample() {
-            const selectedId = $("#example-select").val();
-            const selectedExample = fegaExamples.find(function (example) {
-                return example.id === selectedId;
-            });
-            if (!selectedExample) {
-                setExamplesMessage("Select a FEGA example to load.", true);
-                return;
-            }
-
-            $("#input").val(JSON.stringify(selectedExample.schema, null, 2));
-            $("#input2").val(JSON.stringify(selectedExample.data, null, 2));
-            setExamplesMessage("Loaded " + selectedExample.name + ".", false);
-        }
-
-        function loadFegaExamples() {
-            $("#example-select").prop("disabled", true);
-            $("#load-example").prop("disabled", true);
-            $("#fetch-examples").prop("disabled", true).text("Fetching...");
-            setExamplesMessage("Loading FEGA examples...", false);
-
-            $.ajax({
-                type: "GET",
-                url: "examples?refresh=true",
-                success: function (response) {
-                    populateExamples(response);
-                    $("#fetch-examples").text("Refresh examples");
-                },
-                error: function () {
-                    $("#example-select").empty()
-                        .append($("<option>").val("").text("FEGA examples unavailable"));
-                    setExamplesMessage("Unable to load FEGA examples from this endpoint.", true);
-                },
-                complete: function () {
-                    $("#fetch-examples").prop("disabled", false);
-                }
-            });
-        }
-
-        $("#fetch-examples").click(function (evt) {
-            evt.preventDefault();
-            loadFegaExamples();
-        });
-
-        $("#load-example").click(function (evt) {
-            evt.preventDefault();
-            loadSelectedExample();
-        });
-
-        $("#validate").click(function (event) {
-            event.preventDefault();
-        }).bind("click", function (e) {
-
-            var schema;
-            var instance;
-            var input = document.getElementById("input");
-            var input2 = document.getElementById("input2");
-            $("#results").empty();
-            $("#valid").hide();
-            input.classList.remove("is-invalid");
-            input2.classList.remove("is-invalid");
-
-            try {
-                schema = JSON.parse($("#input").val());
-            } catch (e) {
-                $("#failed").show();
-                input.classList.add('is-invalid')
-                $('#results').append("<p>Unable to parse the JSON in the input fields.</p>");
-            }
-            try {
-                instance = JSON.parse($("#input2").val());
-            } catch (e) {
-                $("#failed").show();
-                input2.classList.add('is-invalid')
-                $('#results').append("<p>Unable to parse the JSON in the input fields.</p>");
-            }
-
-            if (schema && instance) {
-                var submit = {
-                    "schema": schema,
-                    "data": instance
-                };
-
-                $.ajax({
-                    type: "POST",
-                    url: 'validate',
-                    data: JSON.stringify(submit),
-                    success: function (response) {
-
-                        if (response.length === 0) {
-                            $("#valid").show();
-                            $("#failed").hide();
-                            $("#results").empty();
-                        } else {
-                            $("#valid").hide();
-                            $("#failed").show();
-                            $('#results').append("<ul id='cList'></ul>");
-                            error_report(response);
-                        }
-                    },
-                    contentType: 'application/json'
-                });
-            }
-        });
-    });
-</script>
-
 </html>

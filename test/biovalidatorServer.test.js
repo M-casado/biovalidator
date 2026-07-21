@@ -39,11 +39,45 @@ describe('biovalidator server endpoints', () => {
     expect(res.status).toEqual(200);
     expect(res.type).toEqual(expect.stringContaining('html'));
     expect(res.text).toContain('EGA Biovalidator endpoint');
-    expect(res.text).toContain('https://avatars.githubusercontent.com/u/20772902?s=280');
+    expect(res.text).toContain('assets/ega-logo.png');
+    expect(res.text).toContain('alt="EGA logo"');
+    expect(res.text).toContain('assets/ui.min.css');
+    expect(res.text).toContain('assets/ui.min.js');
+    expect(res.text).not.toContain('ajax.googleapis.com');
+    expect(res.text).not.toContain('cdn.jsdelivr.net');
     expect(res.text).toContain('id="example-select"');
     expect(res.text).toContain('id="fetch-examples"');
     expect(res.text).toContain('id="load-example"');
     expect(res.text).toContain('FEGA metadata technical report');
+  });
+
+  it('GET / should serve the self-hosted browser assets', async () => {
+    const javascript = await requestWithSupertest.get('/assets/ui.min.js');
+    const stylesheet = await requestWithSupertest.get('/assets/ui.min.css');
+    const logo = await requestWithSupertest.get('/assets/ega-logo.png');
+
+    expect(javascript.status).toEqual(200);
+    expect(javascript.type).toEqual(expect.stringContaining('javascript'));
+    expect(javascript.text).toContain('Valid JSON syntax.');
+    expect(javascript.text).toContain('Check the JSON syntax in both editors before validating.');
+    expect(stylesheet.status).toEqual(200);
+    expect(stylesheet.type).toEqual(expect.stringContaining('css'));
+    expect(stylesheet.text).toContain('.button-tooltip');
+    expect(stylesheet.text).toContain('.btn.example-ready');
+    expect(logo.status).toEqual(200);
+    expect(logo.type).toEqual(expect.stringContaining('png'));
+  });
+
+  it('GET /index_editing.html should use the same local editor assets', async () => {
+    const res = await requestWithSupertest.get('/index_editing.html');
+
+    expect(res.status).toEqual(200);
+    expect(res.text).toContain('class="bg-light editing-layout"');
+    expect(res.text).toContain('assets/ui.min.js');
+    expect(res.text).toContain('assets/ega-logo.png');
+    expect(res.text).toContain('data-tooltip="Fetch minimal valid FEGA examples."');
+    expect(res.text).not.toContain('ajax.googleapis.com');
+    expect(res.text).not.toContain('cdn.jsdelivr.net');
   });
 
   it('GET / should serve bundled UI when started from another working directory', async () => {
@@ -75,6 +109,20 @@ describe('biovalidator server endpoints', () => {
       "@type": "ega:cohort",
       id: "ega:EGAH00000000001"
     });
+  });
+
+  it('POST /validate accepts present falsy JSON values', async () => {
+    const res = await requestWithSupertest.post('/validate').send({schema: {}, data: null});
+
+    expect(res.status).toEqual(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it('POST /validate still rejects a missing schema or data field', async () => {
+    const res = await requestWithSupertest.post('/validate').send({schema: {}});
+
+    expect(res.status).toEqual(400);
+    expect(res.body.error).toContain("provide both 'schema' and 'data'");
   });
 
   it('GET /examples returns dynamically fetched FEGA examples', async () => {
