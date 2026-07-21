@@ -45,13 +45,13 @@ The biovalidator currently supports JSON Schema draft-06/07/2019-09.
 ## Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/en/about/) - v18+
+- [Node.js](https://nodejs.org/en/about/) - v22+
 - [npm](https://www.npmjs.com/) 
 You can also run the [biovalidator using docker](#running-in-docker) without installing node or npm. 
 
 ### Installation
 
-- Install Node.js: https://nodejs.org/en/ (v18+)
+- Install Node.js: https://nodejs.org/en/ (v22+)
 - Check node and npm version
 ```shell
 node -v
