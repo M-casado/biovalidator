@@ -9,12 +9,16 @@ const {loadSecurityConfig} = require("../utils/security-config");
 const {SecureHttpClient} = require("../utils/secure-http-client");
 const npid = require("npid");
 const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 const childProcess = require("child_process");
 const packageMetadata = require("../../package.json");
 const {getApiCacheDetails, clearApiCaches} = require("../keywords/shared-cache");
 
 const PROCESS_STARTED_AT = new Date(Date.now() - (process.uptime() * 1000)).toISOString();
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
+const VIEW_ROOT = path.join(__dirname, "..", "views");
+const CSP_NONCE_PLACEHOLDER = "__BIOVALIDATOR_CSP_NONCE__";
 
 /**
  * Resolve the runtime toolchain versions once for the lifetime of the process.
@@ -106,6 +110,10 @@ class BioValidatorServer {
     this.baseUrl = process.env.BIOVALIDATOR_BASE_URL || '/';
     this.logPath = process.env.BIOVALIDATOR_LOG_DIR || './logs';
     this.pidPath = process.env.BIOVALIDATOR_PID_PATH || './server.pid';
+    this.uiTemplates = Object.freeze({
+      index: fs.readFileSync(path.join(VIEW_ROOT, "index.html"), "utf8"),
+      editing: fs.readFileSync(path.join(VIEW_ROOT, "index_editing.html"), "utf8")
+    });
     this.deploymentMetadata = resolveDeploymentMetadata(PROCESS_STARTED_AT);
     this.validationMetrics = {
       requests: {
@@ -159,15 +167,23 @@ class BioValidatorServer {
     this.app = express();
     this.app.disable("x-powered-by");
     this.router = express.Router();
-    this.router.use(express.static(path.join(__dirname, "..", "views")));
+    this.router.get(["/", "/index.html", "/index_editing.html"], (req, res) => {
+      const template = req.path === "/index_editing.html" ? this.uiTemplates.editing : this.uiTemplates.index;
+      const nonce = res.locals.cspNonce;
+      res.set("Cache-Control", "no-store");
+      res.type("html").send(template.replaceAll(CSP_NONCE_PLACEHOLDER, nonce));
+    });
+    this.router.use(express.static(VIEW_ROOT, {index: false}));
 
     // Mount before the JSON parser so malformed POST bodies are counted too.
     this.app.use(this.baseUrl, this._trackValidationRequest.bind(this));
 
     this.app.use(function(req, res, next) {
+      const cspNonce = crypto.randomBytes(16).toString("base64");
+      res.locals.cspNonce = cspNonce;
       res.header("Access-Control-Allow-Origin", "*");
       res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-      res.header("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'");
+      res.header("Content-Security-Policy", `default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'nonce-${cspNonce}'`);
       res.header("Cross-Origin-Opener-Policy", "same-origin");
       res.header("Permissions-Policy", "camera=(), geolocation=(), microphone=()");
       res.header("Referrer-Policy", "no-referrer");

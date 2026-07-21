@@ -27,6 +27,7 @@ const validResult = document.getElementById("valid");
 const failedResult = document.getElementById("failed");
 const results = document.getElementById("results");
 const parseLinter = jsonParseLinter();
+const cspNonce = document.querySelector('meta[name="biovalidator-csp-nonce"]')?.content || "";
 const enabledTooltipDelay = 1500;
 const disabledTooltipDelay = 300;
 let visibleTooltip = null;
@@ -188,6 +189,7 @@ function createJsonEditor(name) {
         "aria-label": name === "schema" ? "JSON Schema editor" : "JSON data editor",
         "aria-describedby": `${name}-status`
       }),
+      ...(cspNonce ? [EditorView.cspNonce.of(cspNonce)] : []),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           textarea.value = update.state.doc.toString();

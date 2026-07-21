@@ -8,6 +8,8 @@ Server-side remote `$ref` requests must use credential-free HTTPS on port 443 an
 
 Remote schemas are still supported. Responses are fetched, compiled, and cached by URL; compiled root schemas are cached by a canonical SHA-256 content digest. Local `--ref` registrations take authoritative precedence. A submitted inline schema cannot replace a local or previously verified remote `$id` with different content. If a remote document declares a different URL as its `$id`, the server fetches that canonical URL and requires its content to match before reserving the identifier. Local registrations and outbound response caches are shared between users. Production validation workers keep their compiled caches locally, with content affinity routing repeat uses to a warm idle worker when possible.
 
+The browser UI uses a per-response CSP nonce for CodeMirror's runtime-generated stylesheet. HTML UI responses are not cached so the nonce in the document always matches the nonce in the response policy; no general inline-style allowance is enabled.
+
 Use repeatable `--remoteRef URL` arguments to fetch and compile important allowlisted schemas before the HTTP listener starts. This warms the shared response cache. Local schemas supplied with `--ref` are loaded and registered at startup and remain available through their `$id`.
 
 ## Default limits

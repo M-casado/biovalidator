@@ -52,7 +52,24 @@ describe('biovalidator server endpoints', () => {
     expect(res.text).toContain('FEGA metadata technical report');
     expect(res.headers['x-powered-by']).toBeUndefined();
     expect(res.headers['content-security-policy']).toContain("default-src 'self'");
+    const nonce = res.text.match(/name="biovalidator-csp-nonce" content="([^"]+)"/)[1];
+    expect(nonce).toBeTruthy();
+    expect(res.headers['content-security-policy']).toContain(`'nonce-${nonce}'`);
+    expect(res.headers['content-security-policy']).not.toContain("'unsafe-inline'");
+    expect(res.headers['cache-control']).toBe('no-store');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
+  });
+
+  it('uses a fresh matching CSP nonce for each HTML UI response', async () => {
+    const first = await requestWithSupertest.get('/');
+    const second = await requestWithSupertest.get('/index_editing.html');
+    const firstNonce = first.text.match(/name="biovalidator-csp-nonce" content="([^"]+)"/)[1];
+    const secondNonce = second.text.match(/name="biovalidator-csp-nonce" content="([^"]+)"/)[1];
+
+    expect(firstNonce).not.toBe(secondNonce);
+    expect(first.headers['content-security-policy']).toContain(`'nonce-${firstNonce}'`);
+    expect(second.headers['content-security-policy']).toContain(`'nonce-${secondNonce}'`);
+    expect(second.headers['cache-control']).toBe('no-store');
   });
 
   it('returns an informative Biovalidator limit response for oversized JSON bodies', async () => {
@@ -85,6 +102,7 @@ describe('biovalidator server endpoints', () => {
     expect(javascript.type).toEqual(expect.stringContaining('javascript'));
     expect(javascript.text).toContain('Valid JSON syntax.');
     expect(javascript.text).toContain('Check the JSON syntax in both editors before validating.');
+    expect(javascript.text).toContain('cspNonce');
     expect(stylesheet.status).toEqual(200);
     expect(stylesheet.type).toEqual(expect.stringContaining('css'));
     expect(stylesheet.text).toContain('.button-tooltip');
