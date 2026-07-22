@@ -1,12 +1,22 @@
-# ELIXIR biovalidator - Extended JSON Schema validator with ontology validation 
-<img src="./media/20240216_Biovalidator_logo.png" alt="Biovalidator logo" width="100" height="auto">  [![Build Status](https://travis-ci.org/EMBL-EBI-SUBS/json-schema-validator.svg?branch=master)](https://travis-ci.org/EMBL-EBI-SUBS/json-schema-validator) [![Codacy Badge](https://api.codacy.com/project/badge/Grade/7fbabc981e294249a9a0967965418058)](https://www.codacy.com/app/fpenim/json-schema-validator?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=EMBL-EBI-SUBS/json-schema-validator&amp;utm_campaign=Badge_Grade)
-[![tested with jest](https://img.shields.io/badge/tested_with-jest-99424f.svg)](https://github.com/facebook/jest)
+<img src="./media/20240216_Biovalidator_logo.png" alt="Biovalidator logo" width="140" align="right">
+
+# ELIXIR biovalidator
+
+**Extended JSON Schema validation with ontology support**
+
+[![CI](https://github.com/M-casado/biovalidator/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/M-casado/biovalidator/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/github/license/M-casado/biovalidator)](LICENSE.md)
 
 ELIXIR biovalidator is a [JSON Schema](http://json-schema.org/) validator extended from popular javascript library [AJV](https://ajv.js.org/). 
 In addition to standard JSON Schema validation, the biovalidator covers many validation use cases related life sciences, including ontology validation and taxonomy validation. 
 Furthermore, the biovalidator is capable of running as a server or in CLI mode. 
 
 The biovalidator currently supports JSON Schema draft-06/07/2019-09.
+
+> [!NOTE]
+> This repository is an independently maintained fork of the original [ELIXIR Biovalidator](https://github.com/elixir-europe/biovalidator).
+
+<br clear="right">
 
 ## Breaking changes in recent releases
 - graphRestrictions
@@ -40,6 +50,7 @@ The biovalidator currently supports JSON Schema draft-06/07/2019-09.
   - [isValidTaxonomy](#isvalidtaxonomy)
   - [isValidIdentifier](#isvalididentifier)
 - [Running in Docker](#running-in-docker)
+- [Credits and maintenance](#credits-and-maintenance)
 - [License](#license)
 
 ## Getting Started
@@ -59,7 +70,7 @@ npm -v
 ```
 - Clone project and install dependencies:
 ```
-git clone https://github.com/elixir-europe/biovalidator.git
+git clone https://github.com/M-casado/biovalidator.git
 cd biovalidator
 npm install
 ```
@@ -479,6 +490,12 @@ For development purposes using [nodemon](https://nodemon.io/) is useful. It relo
 ```
 nodemon src/biovalidator
 ```
+
+## Credits and maintenance
+
+Biovalidator was created by the contributors to the original [ELIXIR Biovalidator](https://github.com/elixir-europe/biovalidator). Their authorship is preserved in [CITATION.cff](CITATION.cff), and the original project can be cited using its [Zenodo record](https://doi.org/10.5281/zenodo.5608384).
+
+This fork is currently maintained by [Marcos Casado Barbero](https://orcid.org/0000-0002-7747-6256) ([M-casado](https://github.com/M-casado)). Maintenance and contributions to this fork do not replace or diminish the credit due to the original authors.
 
 ## License
 For more details about licensing see the [LICENSE](LICENSE.md).

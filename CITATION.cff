@@ -1,5 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
+abstract: "An independently maintained fork of ELIXIR Biovalidator, an extended JSON Schema validator with ontology and taxonomy validation."
 authors:
 - family-names: "Liyanage"
   given-names: "Isuru"
@@ -40,8 +41,11 @@ authors:
 - family-names: "Coppens"
   given-names: "Frederik"
   orcid: "https://orcid.org/0000-0001-6565-5145"
-title: "ELIXIR biovalidator for semantic validation of life science metadata"
-version: 1.9.1
-doi: 10.5281/zenodo.5608384
-date-released: 2021-10-28
-url: "https://github.com/elixir-europe/biovalidator"
+- family-names: "Casado Barbero"
+  given-names: "Marcos"
+  orcid: "https://orcid.org/0000-0002-7747-6256"
+title: "ELIXIR Biovalidator: maintained fork for semantic validation of life science metadata"
+version: 2.2.2
+url: "https://github.com/M-casado/biovalidator"
+repository-code: "https://github.com/M-casado/biovalidator"
+license: Apache-2.0
