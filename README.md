@@ -11,7 +11,7 @@ ELIXIR biovalidator is a [JSON Schema](http://json-schema.org/) validator extend
 In addition to standard JSON Schema validation, the biovalidator covers many validation use cases related life sciences, including ontology validation and taxonomy validation. 
 Furthermore, the biovalidator is capable of running as a server or in CLI mode. 
 
-The biovalidator currently supports JSON Schema draft-06/07/2019-09.
+The biovalidator currently supports JSON Schema draft-06/07/2019-09/2020-12.
 
 > [!NOTE]
 > This repository is an independently maintained fork of the original [ELIXIR Biovalidator](https://github.com/elixir-europe/biovalidator).
