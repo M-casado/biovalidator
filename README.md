@@ -1,6 +1,5 @@
-<img src="./media/20240216_Biovalidator_logo.png" alt="Biovalidator logo" width="140" align="right">
-
 # ELIXIR biovalidator
+<img src="./media/20240216_Biovalidator_logo.png" alt="Biovalidator logo" width="140" align="right">
 
 **Extended JSON Schema validation with ontology support**
 
